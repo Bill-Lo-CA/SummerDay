@@ -1,0 +1,29 @@
+import json
+from datetime import date
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from services.api.main import app
+
+
+def test_today_lesson_has_core_learning_content(tmp_path: Path, monkeypatch) -> None:
+    fixture = Path("content/fixtures/daily-lesson.json")
+    lesson_dir = tmp_path / "lessons"
+    lesson_dir.mkdir()
+    (lesson_dir / f"{date.today().isoformat()}.json").write_text(fixture.read_text())
+    monkeypatch.setenv("SOMEADAY_DATA_DIR", str(tmp_path))
+
+    response = TestClient(app).get("/api/lessons/today")
+    lesson = response.json()
+
+    assert response.status_code == 200
+    assert 8 <= len(lesson["core_vocabulary"]) <= 12
+    assert any(item["lexical_item"] == "jouer un rôle" for item in lesson["core_vocabulary"])
+    assert lesson["morphology_focus"]["evidence"] in lesson["article_text"]
+
+
+def test_today_lesson_is_missing_until_published(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SOMEADAY_DATA_DIR", str(tmp_path))
+    assert TestClient(app).get("/api/lessons/today").status_code == 404
+

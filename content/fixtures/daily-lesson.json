@@ -1,0 +1,85 @@
+{
+  "id": "fixture-les-abeilles-a1-v1",
+  "title": "Les abeilles",
+  "level": "A1",
+  "source_title": "Abeille",
+  "source_url": "https://fr.vikidia.org/wiki/Abeille",
+  "source_revision": "fixture-review-required",
+  "article_text": "Les abeilles sont des insectes qui vivent en colonie. Elles fabriquent du miel et transportent le pollen de fleur en fleur. Chaque colonie habite dans une ruche. Les abeilles jouent un rôle important pour les plantes, car elles aident les fleurs à produire des fruits.",
+  "core_vocabulary": [
+    {
+      "lexical_item": "une abeille",
+      "surface_form": "Les abeilles",
+      "part_of_speech": "noun",
+      "french_definition": "Un petit insecte qui produit du miel.",
+      "english_hint": "a bee",
+      "source_sentence": "Les abeilles sont des insectes qui vivent en colonie."
+    },
+    {
+      "lexical_item": "un insecte",
+      "surface_form": "des insectes",
+      "part_of_speech": "noun",
+      "french_definition": "Un petit animal qui possède six pattes.",
+      "english_hint": "an insect",
+      "source_sentence": "Les abeilles sont des insectes qui vivent en colonie."
+    },
+    {
+      "lexical_item": "vivre",
+      "surface_form": "vivent",
+      "part_of_speech": "verb",
+      "french_definition": "Être en vie ou habiter quelque part.",
+      "english_hint": "to live",
+      "source_sentence": "Les abeilles sont des insectes qui vivent en colonie."
+    },
+    {
+      "lexical_item": "une colonie",
+      "surface_form": "colonie",
+      "part_of_speech": "noun",
+      "french_definition": "Un groupe d'animaux qui vivent ensemble.",
+      "english_hint": "a colony",
+      "source_sentence": "Les abeilles sont des insectes qui vivent en colonie."
+    },
+    {
+      "lexical_item": "fabriquer",
+      "surface_form": "fabriquent",
+      "part_of_speech": "verb",
+      "french_definition": "Créer ou produire quelque chose.",
+      "english_hint": "to make",
+      "source_sentence": "Elles fabriquent du miel et transportent le pollen de fleur en fleur."
+    },
+    {
+      "lexical_item": "le miel",
+      "surface_form": "du miel",
+      "part_of_speech": "noun",
+      "french_definition": "Une substance sucrée produite par les abeilles.",
+      "english_hint": "honey",
+      "source_sentence": "Elles fabriquent du miel et transportent le pollen de fleur en fleur."
+    },
+    {
+      "lexical_item": "une ruche",
+      "surface_form": "une ruche",
+      "part_of_speech": "noun",
+      "french_definition": "La maison construite pour une colonie d'abeilles.",
+      "english_hint": "a beehive",
+      "source_sentence": "Chaque colonie habite dans une ruche."
+    },
+    {
+      "lexical_item": "jouer un rôle",
+      "surface_form": "jouent un rôle",
+      "part_of_speech": "expression",
+      "french_definition": "Avoir une fonction ou une importance particulière.",
+      "english_hint": "to play a role",
+      "source_sentence": "Les abeilles jouent un rôle important pour les plantes, car elles aident les fleurs à produire des fruits."
+    }
+  ],
+  "morphology_focus": {
+    "title": "vivent → vivre",
+    "explanation": "Vivent est la forme de vivre utilisée avec elles ou ils.",
+    "evidence": "Les abeilles sont des insectes qui vivent en colonie."
+  },
+  "pronunciation_focus": {
+    "title": "Les abeilles",
+    "explanation": "Le s de les se lie à abeilles : les‿abeilles.",
+    "evidence": "Les abeilles sont des insectes qui vivent en colonie."
+  }
+}
