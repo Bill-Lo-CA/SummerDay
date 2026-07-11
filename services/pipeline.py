@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from services.api.schemas import DailyLesson
+from services.nlp import NLPAnalysis, analyze_text
 
 
 VIKIDIA_API = "https://fr.vikidia.org/w/api.php"
@@ -31,14 +32,14 @@ class SourceArticle:
     text: str
 
 
-def request_json(url: str, payload: dict | None = None) -> dict:
+def request_json(url: str, payload: dict | None = None, timeout: float = 180) -> dict:
     body = json.dumps(payload).encode() if payload else None
     request = Request(
         url,
         data=body,
         headers={"Content-Type": "application/json", "User-Agent": "SomeADay/0.1"},
     )
-    with urlopen(request, timeout=180) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.load(response)
 
 
@@ -58,7 +59,7 @@ def clean_segment(text: str, minimum: int = 90, maximum: int = 160) -> str | Non
     return " ".join(selected) if minimum <= words <= maximum else None
 
 
-def fetch_vikidia_article() -> SourceArticle:
+def fetch_vikidia_articles() -> list[SourceArticle]:
     params = urlencode(
         {
             "action": "query",
@@ -76,19 +77,34 @@ def fetch_vikidia_article() -> SourceArticle:
         }
     )
     pages = request_json(f"{VIKIDIA_API}?{params}")["query"]["pages"]
+    articles = []
     for page in pages:
         segment = clean_segment(page.get("extract", ""))
         if segment:
             revision = page["revisions"][0]
-            return SourceArticle(
-                page_id=page["pageid"],
-                revision_id=revision["revid"],
-                title=page["title"],
-                url=page["fullurl"],
-                retrieved_at=datetime.now(timezone.utc).isoformat(),
-                text=segment,
+            articles.append(
+                SourceArticle(
+                    page_id=page["pageid"],
+                    revision_id=revision["revid"],
+                    title=page["title"],
+                    url=page["fullurl"],
+                    retrieved_at=datetime.now(timezone.utc).isoformat(),
+                    text=segment,
+                )
             )
-    raise RuntimeError("Vikidia returned no article with a usable 90–160 word segment.")
+    if not articles:
+        raise RuntimeError("Vikidia returned no article with a usable 90–160 word segment.")
+    return articles
+
+
+def select_article(
+    articles: list[SourceArticle], analyzer: Callable[[str], NLPAnalysis] = analyze_text
+) -> tuple[SourceArticle, NLPAnalysis]:
+    for article in articles:
+        analysis = analyzer(article.text)
+        if analysis.suitability.classification == "suitable":
+            return article, analysis
+    raise RuntimeError("Vikidia returned no article that passed A1 NLP suitability checks.")
 
 
 def ollama_generate(prompt: str) -> dict:
@@ -102,13 +118,21 @@ def ollama_generate(prompt: str) -> dict:
             "think": False,
             "options": {"temperature": 0.2},
         },
+        timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600")),
     )
     return json.loads(response["message"]["content"])
 
 
-def lesson_prompt(source: SourceArticle, lesson_date: date) -> str:
+def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
+    tokens = [
+        f"{token.text}|{token.lemma}|{token.upos}|{token.feats or '_'}"
+        for sentence in analysis.sentences
+        for token in sentence.tokens
+        if token.upos != "PUNCT"
+    ]
     return f"""Create an A1 French lesson for {lesson_date.isoformat()} from only the source text below.
 Return JSON matching the supplied schema. Select 8–12 useful core lexical items. Keep pronominal verbs and multiword expressions complete. Every surface_form, source_sentence, morphology evidence, and pronunciation evidence must occur verbatim in article_text. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
+Use the deterministic NLP evidence below for lemmas, part of speech, and morphology. Avoid PROPN items.
 
 Set these fields exactly:
 id: vikidia-{source.page_id}-{source.revision_id}-{lesson_date.isoformat()}
@@ -118,7 +142,10 @@ source_revision: {source.revision_id}
 article_text: {source.text}
 
 Source text:
-{source.text}"""
+{source.text}
+
+NLP tokens (surface|lemma|UPOS|features):
+{chr(10).join(tokens)}"""
 
 
 def validate_evidence(lesson: DailyLesson) -> DailyLesson:
@@ -160,16 +187,76 @@ def apply_source_fields(payload: dict, source: SourceArticle, lesson_date: date)
     }
 
 
+def normalize_vocabulary(payload: dict, analysis: NLPAnalysis) -> dict:
+    tokens = [token for sentence in analysis.sentences for token in sentence.tokens]
+    for item in payload.get("core_vocabulary", []):
+        source_sentence = next(
+            (
+                sentence.text
+                for sentence in analysis.sentences
+                if item.get("surface_form", "").casefold() in sentence.text.casefold()
+            ),
+            None,
+        )
+        if source_sentence:
+            item["source_sentence"] = source_sentence
+        surface = item.get("surface_form", "").casefold().split()
+        matches = [
+            tokens[index : index + len(surface)]
+            for index in range(len(tokens) - len(surface) + 1)
+            if [token.text.casefold() for token in tokens[index : index + len(surface)]] == surface
+        ]
+        if not matches:
+            continue
+        match = matches[0]
+        verbs = [token for token in match if token.upos in {"VERB", "AUX"}]
+        if len(match) == 1 and verbs:
+            item["lexical_item"] = verbs[0].lemma
+        reflexive = any(
+            token.text.casefold() in {"se", "s'", "s’"} or token.lemma.casefold() in {"se", "soi"}
+            for token in match
+        ) and verbs
+        if reflexive:
+            item["lexical_item"] = f"se {verbs[-1].lemma}"
+        if len(match) == 1 or reflexive:
+            head = verbs[0] if verbs else match[0]
+            item["lemma"] = head.lemma
+            item["part_of_speech"] = head.upos.lower()
+            item["morphology"] = head.feats
+    payload["core_vocabulary"] = [
+        item for item in payload.get("core_vocabulary", []) if item.get("part_of_speech") != "propn"
+    ]
+    return payload
+
+
+def normalize_focus_evidence(payload: dict, analysis: NLPAnalysis) -> dict:
+    sentences = [sentence.text for sentence in analysis.sentences]
+    for key in ("morphology_focus", "pronunciation_focus"):
+        focus = payload.get(key, {})
+        if focus.get("evidence") in sentences:
+            continue
+        focus_text = f"{focus.get('title', '')} {focus.get('explanation', '')}"
+        terms = {word.casefold() for word in re.findall(r"[\wÀ-ÿ]+", focus_text) if len(word) > 2}
+        scored = [(sum(term in sentence.casefold() for term in terms), sentence) for sentence in sentences]
+        score, sentence = max(scored, default=(0, ""))
+        if score:
+            focus["evidence"] = sentence
+    return payload
+
+
 def generate_lesson(
     source: SourceArticle,
     lesson_date: date,
+    analysis: NLPAnalysis,
     generator: Callable[[str], dict] = ollama_generate,
 ) -> DailyLesson:
-    prompt = lesson_prompt(source, lesson_date)
+    prompt = lesson_prompt(source, lesson_date, analysis)
     error = ""
     for _ in range(2):
         try:
             payload = apply_source_fields(generator(prompt), source, lesson_date)
+            payload = normalize_vocabulary(payload, analysis)
+            payload = normalize_focus_evidence(payload, analysis)
             payload = deduplicate_vocabulary(payload)
             return validate_evidence(DailyLesson.model_validate(payload))
         except (ValidationError, ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -179,11 +266,14 @@ def generate_lesson(
 
 
 def generate(lesson_date: date) -> Path:
-    source = fetch_vikidia_article()
-    lesson = generate_lesson(source, lesson_date)
+    source, analysis = select_article(fetch_vikidia_articles())
+    lesson = generate_lesson(source, lesson_date, analysis)
     draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
+    analysis_path = DATA_DIR / "analysis" / f"{lesson_date.isoformat()}.json"
     draft.parent.mkdir(parents=True, exist_ok=True)
+    analysis_path.parent.mkdir(parents=True, exist_ok=True)
     draft.write_text(lesson.model_dump_json(indent=2) + "\n")
+    analysis_path.write_text(analysis.model_dump_json(indent=2) + "\n")
     return draft
 
 
@@ -195,6 +285,8 @@ def publish(lesson_date: date) -> Path:
     lesson = validate_evidence(DailyLesson.model_validate_json(draft.read_text()))
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(draft, target)
+    analysis = DATA_DIR / "analysis" / draft.name
+    shutil.copyfile(analysis, target.with_suffix(".analysis.json"))
     return target
 
 

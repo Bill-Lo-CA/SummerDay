@@ -8,6 +8,8 @@ class VocabularyItem(BaseModel):
     french_definition: str
     english_hint: str
     source_sentence: str
+    lemma: str | None = None
+    morphology: str | None = None
 
 
 class LessonFocus(BaseModel):
@@ -27,4 +29,3 @@ class DailyLesson(BaseModel):
     core_vocabulary: list[VocabularyItem] = Field(min_length=8, max_length=12)
     morphology_focus: LessonFocus
     pronunciation_focus: LessonFocus
-
