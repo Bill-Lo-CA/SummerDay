@@ -1,0 +1,23 @@
+server {
+    listen 443 ssl;
+    server_name lessons.example.test;
+
+    # Supply real certificate paths in the deployment environment.
+    ssl_certificate /etc/letsencrypt/live/lessons.example.test/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/lessons.example.test/privkey.pem;
+
+    root /srv/someaday/web;
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+    location /media/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
