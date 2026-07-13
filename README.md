@@ -18,11 +18,13 @@ The current branch contains the first daily-lesson vertical slice:
   morphology, and dependency parsing
 - Basic A1 article suitability signals
 - Local Ollama lesson generation with schema and source-evidence validation
+- Immutable lesson audio packages with configurable TTS providers
+- Safe `/media/*` delivery, pronunciation review gate, and timezone-aware daily assignment
 - Mutable JSON drafts and immutable date-based published lessons
 - Model-independent tests using fake providers
 
-Accounts, placement, SQLite, TTS, ASR, review scheduling, and automatic
-scheduling are not implemented yet.
+Accounts, placement, SQLite, ASR, pronunciation scoring, review scheduling, and
+automatic scheduling are not implemented yet.
 
 ## Requirements
 
@@ -44,6 +46,11 @@ uv run python -m services.nlp download
 ```
 
 Models are stored under `data/stanza/`, which is intentionally ignored by Git.
+
+Copy `.env.example` to the deployment environment. The default `fake` TTS
+provider keeps tests and offline development model-independent. Set
+`SOMEADAY_TTS_PROVIDER=command` and `SOMEADAY_TTS_COMMAND` for a local CLI TTS
+engine; the command receives French text on stdin and the output path last.
 
 ## Run the application
 
@@ -81,8 +88,14 @@ data/drafts/YYYY-MM-DD.json
 data/analysis/YYYY-MM-DD.json
 ```
 
-Review the draft before publishing it. Publishing refuses to overwrite an
-existing lesson version:
+Review the pronunciation focus, then mark it approved before publishing:
+
+```bash
+uv run python -m services.pipeline review
+```
+
+Publishing refuses missing/unapproved/hash-invalid audio and refuses to
+overwrite an existing lesson version:
 
 ```bash
 uv run python -m services.pipeline publish
@@ -101,6 +114,9 @@ Ollama configuration is optional:
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_CONTENT_MODEL=qwen3:8b
 OLLAMA_TIMEOUT_SECONDS=600
+SOMEADAY_TIMEZONE=America/Toronto
+SOMEADAY_DATA_DIR=data
+SOMEADAY_MEDIA_DIR=data/media
 ```
 
 Ollama may use CPU when GPU capacity is unavailable. Stanza uses CPU by default;
@@ -121,6 +137,17 @@ git diff --check
 The real generation command is model- and network-dependent and should be run
 separately from normal CI.
 
+## Single-machine deployment
+
+Keep `data/` and `data/media/` on persistent storage and back them up together;
+the lesson JSON references immutable media files under the media root. Bind
+Ollama and TTS to `127.0.0.1`, run the API behind HTTPS, and proxy `/api/` and
+`/media/` through the same origin as the built frontend. Example nginx and
+systemd templates are under `deploy/`. Check `/api/health` after deployment.
+
+Do not expose the media directory directly as a filesystem alias: the API
+validates the path and serves versioned files with immutable cache headers.
+
 ## Repository boundaries
 
 - Implementation code lives in this repository.
@@ -128,4 +155,3 @@ separately from normal CI.
   files and is ignored by this repository.
 - Generated lesson data and NLP models live under ignored `data/`.
 - No private specification content should be copied into this README.
-
