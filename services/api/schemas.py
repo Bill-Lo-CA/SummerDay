@@ -12,12 +12,19 @@ class VocabularyItem(BaseModel):
     source_sentence: str
     lemma: str | None = None
     morphology: str | None = None
+    spoken_text: str | None = None
+    audio: AudioAssetRef | None = None
 
 
 class LessonFocus(BaseModel):
     title: str
     explanation: str
     evidence: str
+    target_phrase: str | None = None
+    focus_type: str | None = None
+    requirement: str = "required"
+    review_status: str = "pending"
+    reference_audio: AudioAssetRef | None = None
 
 
 class DailyLesson(BaseModel):
