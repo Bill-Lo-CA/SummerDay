@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from services.api.schemas import DailyLesson
 from services.audio.generation import attach_required_audio
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
+from services.config import application_date
 from services.nlp import NLPAnalysis, analyze_text
 from services.providers.fake_tts import FakeTTSProvider
 from services.providers.command_tts import CommandTTSProvider
@@ -313,7 +314,7 @@ def review(lesson_date: date) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or publish a daily lesson.")
     parser.add_argument("command", choices=("generate", "review", "publish"))
-    parser.add_argument("--date", type=date.fromisoformat, default=date.today())
+    parser.add_argument("--date", type=date.fromisoformat, default=application_date())
     args = parser.parse_args()
     path = {"generate": generate, "review": review, "publish": publish}[args.command](args.date)
     print(path)
