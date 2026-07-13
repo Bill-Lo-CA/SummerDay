@@ -75,7 +75,7 @@ def attach_required_audio(
     package.mkdir(parents=True, exist_ok=True)
     prefix = f"lessons/{lesson.id}"
     lesson.learning_audio = _asset(
-        lesson.id, f"{prefix}/segment-learning.opus", lesson.article_text, profile, provider, media_root
+        lesson.id, f"{prefix}/segment-learning.wav", lesson.article_text, profile, provider, media_root
     )
     lesson.sentences = [
         LessonSentence(
@@ -84,7 +84,7 @@ def attach_required_audio(
             text=sentence.text,
             learning_audio=_asset(
                 lesson.id,
-                f"{prefix}/sentences/{sentence_id(index, sentence.text)}.opus",
+                f"{prefix}/sentences/{sentence_id(index, sentence.text)}.wav",
                 sentence.text,
                 profile,
                 provider,
@@ -97,7 +97,7 @@ def attach_required_audio(
         item.spoken_text = item.spoken_text or item.lexical_item
         item.audio = _asset(
             lesson.id,
-            f"{prefix}/vocabulary/{index:02d}.opus",
+            f"{prefix}/vocabulary/{index:02d}.wav",
             item.spoken_text,
             profile,
             provider,
@@ -107,7 +107,7 @@ def attach_required_audio(
     focus.target_phrase = focus.target_phrase or focus.evidence
     focus.reference_audio = _asset(
         lesson.id,
-        f"{prefix}/pronunciation/focus.opus",
+        f"{prefix}/pronunciation/focus.wav",
         focus.target_phrase,
         profile,
         provider,

@@ -47,8 +47,9 @@ uv run python -m services.nlp download
 
 Models are stored under `data/stanza/`, which is intentionally ignored by Git.
 
-Copy `.env.example` to the deployment environment. The default `fake` TTS
-provider keeps tests and offline development model-independent. Set
+Copy `.env.example` to the deployment environment. Set `fake` explicitly for
+offline development; production generation defaults to requiring a configured
+real command provider. Set
 `SOMEADAY_TTS_PROVIDER=command` and `SOMEADAY_TTS_COMMAND` for a local CLI TTS
 engine; the command receives French text on stdin and the output path last.
 

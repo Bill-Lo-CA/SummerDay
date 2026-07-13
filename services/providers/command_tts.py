@@ -35,6 +35,6 @@ class CommandTTSProvider:
         return AudioGenerationResult(
             provider="command",
             model=self.model,
-            mime_type="audio/ogg",
+            mime_type="audio/wav",
             speech_rate=float(profile.learning_target_wpm),
         )

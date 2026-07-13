@@ -261,7 +261,7 @@ def generate_lesson(
 def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
     lesson = generate_lesson(source, lesson_date, analysis)
-    provider_name = os.getenv("SOMEADAY_TTS_PROVIDER", "fake")
+    provider_name = os.getenv("SOMEADAY_TTS_PROVIDER", "command")
     if provider_name == "command":
         command = os.getenv("SOMEADAY_TTS_COMMAND")
         if not command:
