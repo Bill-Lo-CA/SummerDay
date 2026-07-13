@@ -18,7 +18,7 @@ async def test_today_lesson_has_core_learning_content(tmp_path: Path, monkeypatc
     fixture = Path("content/fixtures/daily-lesson.json")
     lesson_dir = tmp_path / "lessons"
     lesson_dir.mkdir()
-    (lesson_dir / f"{date.today().isoformat()}.json").write_text(fixture.read_text())
+    (lesson_dir / f"{application_date().isoformat()}.json").write_text(fixture.read_text())
     monkeypatch.setenv("SOMEADAY_DATA_DIR", str(tmp_path))
 
     async with httpx.AsyncClient(
