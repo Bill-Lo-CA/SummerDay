@@ -14,11 +14,10 @@ from pydantic import ValidationError
 
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis, analyze_text
+from services.providers.ollama import OllamaContentProvider
 
 
 VIKIDIA_API = "https://fr.vikidia.org/w/api.php"
-OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_CONTENT_MODEL", "qwen3:8b")
 DATA_DIR = Path(os.getenv("SOMEADAY_DATA_DIR", "data"))
 
 
@@ -108,19 +107,7 @@ def select_article(
 
 
 def ollama_generate(prompt: str) -> dict:
-    response = request_json(
-        f"{OLLAMA_URL}/api/chat",
-        {
-            "model": OLLAMA_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "format": DailyLesson.model_json_schema(),
-            "stream": False,
-            "think": False,
-            "options": {"temperature": 0.2},
-        },
-        timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600")),
-    )
-    return json.loads(response["message"]["content"])
+    return OllamaContentProvider().generate(prompt, DailyLesson.model_json_schema())
 
 
 def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
