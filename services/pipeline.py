@@ -23,8 +23,8 @@ from services.providers.ollama import OllamaContentProvider
 
 
 VIKIDIA_API = "https://fr.vikidia.org/w/api.php"
-DATA_DIR = Path(os.getenv("SOMEADAY_DATA_DIR", "data"))
-MEDIA_DIR = Path(os.getenv("SOMEADAY_MEDIA_DIR", str(DATA_DIR / "media")))
+DATA_DIR = Path(os.getenv("SUMMERDAY_DATA_DIR", "data"))
+MEDIA_DIR = Path(os.getenv("SUMMERDAY_MEDIA_DIR", str(DATA_DIR / "media")))
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ def request_json(url: str, payload: dict | None = None, timeout: float = 180) ->
     request = Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "SomeADay/0.1"},
+        headers={"Content-Type": "application/json", "User-Agent": "SummerDay/0.1"},
     )
     with urlopen(request, timeout=timeout) as response:
         return json.load(response)
@@ -261,12 +261,12 @@ def generate_lesson(
 def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
     lesson = generate_lesson(source, lesson_date, analysis)
-    provider_name = os.getenv("SOMEADAY_TTS_PROVIDER", "command")
+    provider_name = os.getenv("SUMMERDAY_TTS_PROVIDER", "command")
     if provider_name == "command":
-        command = os.getenv("SOMEADAY_TTS_COMMAND")
+        command = os.getenv("SUMMERDAY_TTS_COMMAND")
         if not command:
-            raise RuntimeError("SOMEADAY_TTS_COMMAND is required for command TTS")
-        provider = CommandTTSProvider(command, os.getenv("SOMEADAY_TTS_MODEL", "configured"))
+            raise RuntimeError("SUMMERDAY_TTS_COMMAND is required for command TTS")
+        provider = CommandTTSProvider(command, os.getenv("SUMMERDAY_TTS_MODEL", "configured"))
     else:
         provider = FakeTTSProvider()
     lesson = attach_required_audio(lesson, analysis, provider, MEDIA_DIR)

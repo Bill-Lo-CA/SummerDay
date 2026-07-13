@@ -6,7 +6,7 @@ does not put generated audio in Git.
 Use the fake provider for CI smoke tests:
 
 ```bash
-uv run python -m scripts.evaluate_tts --output /tmp/someaday-tts-eval
+uv run python -m scripts.evaluate_tts --output /tmp/summerday-tts-eval
 ```
 
 For a local CLI provider, include `{speed}` or `{wpm}` in the command so the
@@ -18,7 +18,7 @@ uv run python -m scripts.evaluate_tts \
   --provider command \
   --command 'my-tts --model fr_FR-upmc-medium --rate {wpm} --output {output_path}' \
   --model fr_FR-upmc-medium \
-  --output /tmp/someaday-tts-eval
+  --output /tmp/summerday-tts-eval
 ```
 
 The summary records latency and output size. Human review must still assess

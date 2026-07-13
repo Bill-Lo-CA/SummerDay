@@ -105,7 +105,7 @@ def download_models() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Manage SomeADay French NLP models.")
+    parser = argparse.ArgumentParser(description="Manage SummerDay French NLP models.")
     parser.add_argument("command", choices=("download",))
     if parser.parse_args().command == "download":
         download_models()
@@ -113,4 +113,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

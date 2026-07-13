@@ -4,11 +4,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def application_timezone() -> ZoneInfo:
-    name = os.getenv("SOMEADAY_TIMEZONE", "America/Toronto")
+    name = os.getenv("SUMMERDAY_TIMEZONE", "America/Toronto")
     try:
         return ZoneInfo(name)
     except ZoneInfoNotFoundError as exc:
-        raise RuntimeError(f"invalid SOMEADAY_TIMEZONE: {name}") from exc
+        raise RuntimeError(f"invalid SUMMERDAY_TIMEZONE: {name}") from exc
 
 
 def application_date(now: datetime | None = None) -> date:
