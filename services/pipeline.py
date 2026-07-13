@@ -13,12 +13,17 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from services.api.schemas import DailyLesson
+from services.audio.generation import attach_required_audio
+from services.audio.publication import mark_audio_published, validate_publishable_lesson
 from services.nlp import NLPAnalysis, analyze_text
+from services.providers.fake_tts import FakeTTSProvider
+from services.providers.command_tts import CommandTTSProvider
 from services.providers.ollama import OllamaContentProvider
 
 
 VIKIDIA_API = "https://fr.vikidia.org/w/api.php"
 DATA_DIR = Path(os.getenv("SOMEADAY_DATA_DIR", "data"))
+MEDIA_DIR = Path(os.getenv("SOMEADAY_MEDIA_DIR", str(DATA_DIR / "media")))
 
 
 @dataclass(frozen=True)
@@ -255,6 +260,15 @@ def generate_lesson(
 def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
     lesson = generate_lesson(source, lesson_date, analysis)
+    provider_name = os.getenv("SOMEADAY_TTS_PROVIDER", "fake")
+    if provider_name == "command":
+        command = os.getenv("SOMEADAY_TTS_COMMAND")
+        if not command:
+            raise RuntimeError("SOMEADAY_TTS_COMMAND is required for command TTS")
+        provider = CommandTTSProvider(command, os.getenv("SOMEADAY_TTS_MODEL", "configured"))
+    else:
+        provider = FakeTTSProvider()
+    lesson = attach_required_audio(lesson, analysis, provider, MEDIA_DIR)
     draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
     analysis_path = DATA_DIR / "analysis" / f"{lesson_date.isoformat()}.json"
     draft.parent.mkdir(parents=True, exist_ok=True)
@@ -270,19 +284,38 @@ def publish(lesson_date: date) -> Path:
     if target.exists():
         raise FileExistsError(f"Published lesson is immutable: {target}")
     lesson = validate_evidence(DailyLesson.model_validate_json(draft.read_text()))
+    lesson = validate_publishable_lesson(lesson, MEDIA_DIR)
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(draft, target)
     analysis = DATA_DIR / "analysis" / draft.name
     shutil.copyfile(analysis, target.with_suffix(".analysis.json"))
+    mark_audio_published(lesson, MEDIA_DIR)
     return target
+
+
+def review(lesson_date: date) -> Path:
+    draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
+    lesson = DailyLesson.model_validate_json(draft.read_text())
+    if lesson.pronunciation_focus.reference_audio is None:
+        raise ValueError("audio must be generated before pronunciation review")
+    lesson.pronunciation_focus.review_status = "approved"
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
+    draft.write_text(lesson.model_dump_json(indent=2) + "\n")
+    manifest = MEDIA_DIR / "lessons" / lesson.id / "manifest.json"
+    data = json.loads(manifest.read_text())
+    for asset in data["assets"]:
+        if asset["asset_id"] == lesson.pronunciation_focus.reference_audio.asset_id:
+            asset["review_status"] = "approved"
+    manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return draft
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or publish a daily lesson.")
-    parser.add_argument("command", choices=("generate", "publish"))
+    parser.add_argument("command", choices=("generate", "review", "publish"))
     parser.add_argument("--date", type=date.fromisoformat, default=date.today())
     args = parser.parse_args()
-    path = generate(args.date) if args.command == "generate" else publish(args.date)
+    path = {"generate": generate, "review": review, "publish": publish}[args.command](args.date)
     print(path)
 
 
