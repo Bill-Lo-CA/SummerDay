@@ -31,6 +31,10 @@ def test_required_audio_package_can_be_published(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     lesson.pronunciation_focus.review_status = "approved"
     attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    assert lesson.pronunciation_focus.review_status == "approved"
+    assert lesson.pronunciation_focus.reference_audio.review_status == "pending"
+    lesson.pronunciation_focus.review_status = "approved"
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
 
     validate_publishable_lesson(lesson, tmp_path)
     mark_audio_published(lesson, tmp_path)
@@ -41,6 +45,7 @@ def test_missing_vocabulary_audio_blocks_publication(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     lesson.pronunciation_focus.review_status = "approved"
     attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
     lesson.core_vocabulary[0].audio = None
 
     with pytest.raises(ValueError, match="vocabulary audio"):
@@ -50,6 +55,15 @@ def test_missing_vocabulary_audio_blocks_publication(tmp_path: Path) -> None:
 def test_unapproved_focus_blocks_publication(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+
+    with pytest.raises(ValueError, match="requires approval"):
+        validate_publishable_lesson(lesson, tmp_path)
+
+
+def test_pending_focus_audio_blocks_publication_even_when_focus_is_approved(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    lesson.pronunciation_focus.review_status = "approved"
 
     with pytest.raises(ValueError, match="requires approval"):
         validate_publishable_lesson(lesson, tmp_path)

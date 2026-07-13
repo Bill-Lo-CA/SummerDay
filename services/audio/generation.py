@@ -38,7 +38,6 @@ def _asset(
     profile: SpeechProfile,
     provider: Synthesizer,
     media_root: Path,
-    review_status: str = "pending",
 ) -> AudioAssetRef:
     if relative_path.startswith(f"lessons/{lesson_id}/") is False:
         raise ValueError("lesson audio path must use the lesson package directory")
@@ -60,7 +59,7 @@ def _asset(
         model=result.model,
         voice=result.voice,
         speech_rate=result.speech_rate,
-        review_status=review_status,
+        review_status="pending",
     )
 
 
@@ -112,8 +111,7 @@ def attach_required_audio(
         focus.target_phrase,
         profile,
         provider,
-    media_root,
-        review_status=focus.review_status,
+        media_root,
     )
     manifest = {
         "lesson_id": lesson.id,

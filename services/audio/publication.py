@@ -13,7 +13,11 @@ def validate_publishable_lesson(lesson: DailyLesson, media_root: Path) -> DailyL
     if lesson.pronunciation_focus.target_phrase is None:
         raise ValueError("pronunciation focus requires a target phrase")
     focus = lesson.pronunciation_focus
-    if focus.review_status != "approved" or focus.reference_audio is None:
+    if (
+        focus.review_status != "approved"
+        or focus.reference_audio is None
+        or focus.reference_audio.review_status != "approved"
+    ):
         raise ValueError("pronunciation focus audio requires approval")
     validate_audio_asset(lesson.learning_audio, media_root)
     for sentence in lesson.sentences:
