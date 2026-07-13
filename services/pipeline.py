@@ -107,7 +107,7 @@ def select_article(
 
 
 def ollama_generate(prompt: str) -> dict:
-    return OllamaContentProvider().generate(prompt, DailyLesson.model_json_schema())
+    return OllamaContentProvider().generate(prompt)
 
 
 def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
