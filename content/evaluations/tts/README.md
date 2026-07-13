@@ -9,13 +9,14 @@ Use the fake provider for CI smoke tests:
 uv run python -m scripts.evaluate_tts --output /tmp/someaday-tts-eval
 ```
 
-For a local CLI provider, the command receives text on stdin and the output
-path as its final argument:
+For a local CLI provider, include `{speed}` or `{wpm}` in the command so the
+learning and natural runs use different settings. `{output_path}` is optional;
+when absent, the path is appended as the final argument. Text is sent on stdin:
 
 ```bash
 uv run python -m scripts.evaluate_tts \
   --provider command \
-  --command 'piper --model fr_FR-upmc-medium.onnx --output_file' \
+  --command 'my-tts --model fr_FR-upmc-medium --rate {wpm} --output {output_path}' \
   --model fr_FR-upmc-medium \
   --output /tmp/someaday-tts-eval
 ```

@@ -32,7 +32,10 @@ def make_provider(args: argparse.Namespace):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a local TTS provider.")
     parser.add_argument("--provider", choices=("fake", "command"), default="fake")
-    parser.add_argument("--command", help="CLI accepting output path as its last argument and text on stdin")
+    parser.add_argument(
+        "--command",
+        help="CLI template with {speed} or {wpm}; optionally {output_path}; text is sent on stdin",
+    )
     parser.add_argument("--model", default="configured")
     parser.add_argument("--speed", choices=("learning", "natural"), action="append", default=None)
     parser.add_argument("--output", type=Path, required=True)
