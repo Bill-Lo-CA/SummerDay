@@ -51,7 +51,13 @@ Copy `.env.example` to the deployment environment. Set `fake` explicitly for
 offline development; production generation defaults to requiring a configured
 real command provider. Set
 `SOMEADAY_TTS_PROVIDER=command` and `SOMEADAY_TTS_COMMAND` for a local CLI TTS
-engine; the command receives French text on stdin and the output path last.
+engine. The command must include `{speed}` or `{wpm}` so learning and natural
+profiles can use different rates; `{output_path}` is optional and is appended
+as the final argument when omitted. French text is sent on stdin. For example:
+
+```text
+SOMEADAY_TTS_COMMAND=my-tts --rate {wpm} --output {output_path}
+```
 
 ## Run the application
 
