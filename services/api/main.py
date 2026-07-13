@@ -10,7 +10,7 @@ from services.api.schemas import DailyLesson
 from services.audio.storage import resolve_media_path
 from services.config import application_date, application_timezone
 
-app = FastAPI(title="SomeADay API")
+app = FastAPI(title="SummerDay API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -21,7 +21,7 @@ app.add_middleware(
 
 @app.get("/api/lessons/today", response_model=DailyLesson)
 def today_lesson() -> DailyLesson:
-    data_dir = Path(os.getenv("SOMEADAY_DATA_DIR", "data"))
+    data_dir = Path(os.getenv("SUMMERDAY_DATA_DIR", "data"))
     path = data_dir / "lessons" / f"{application_date().isoformat()}.json"
     if not path.exists():
         raise HTTPException(404, "Today's lesson has not been published.")
@@ -30,7 +30,7 @@ def today_lesson() -> DailyLesson:
 
 @app.get("/media/{asset_path:path}")
 def media(asset_path: str) -> FileResponse:
-    media_root = Path(os.getenv("SOMEADAY_MEDIA_DIR", str(Path(os.getenv("SOMEADAY_DATA_DIR", "data")) / "media")))
+    media_root = Path(os.getenv("SUMMERDAY_MEDIA_DIR", str(Path(os.getenv("SUMMERDAY_DATA_DIR", "data")) / "media")))
     try:
         path = resolve_media_path(media_root, asset_path)
     except ValueError as exc:

@@ -9,7 +9,7 @@ def test_media_route_serves_asset_and_rejects_traversal(tmp_path: Path, monkeypa
     asset = tmp_path / "lessons" / "lesson-1" / "audio.opus"
     asset.parent.mkdir(parents=True)
     asset.write_bytes(b"audio")
-    monkeypatch.setenv("SOMEADAY_MEDIA_DIR", str(tmp_path))
+    monkeypatch.setenv("SUMMERDAY_MEDIA_DIR", str(tmp_path))
     client = TestClient(app)
 
     response = client.get("/media/lessons/lesson-1/audio.opus")

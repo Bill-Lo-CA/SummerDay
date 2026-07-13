@@ -46,7 +46,7 @@
   });
 </script>
 
-<svelte:head><title>Today’s French · SomeADay</title></svelte:head>
+<svelte:head><title>Today’s French · SummerDay</title></svelte:head>
 
 <main>
   {#if error}

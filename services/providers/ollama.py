@@ -24,7 +24,7 @@ class OllamaContentProvider:
                     "options": {"temperature": 0.2},
                 }
             ).encode(),
-            headers={"Content-Type": "application/json", "User-Agent": "SomeADay/0.1"},
+            headers={"Content-Type": "application/json", "User-Agent": "SummerDay/0.1"},
         )
         with urlopen(request, timeout=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600"))) as response:
             return json.loads(json.load(response)["message"]["content"])

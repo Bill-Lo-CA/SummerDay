@@ -1,11 +1,7 @@
-# SomeADay
+# SummerDay
 
-SomeADay is a local-first French learning application built around one short
+SummerDay is a local-first French learning application built around one short
 reading lesson and a small set of useful vocabulary each day.
-
-The name is a working name. The project started from **TwelveADay**, became
-**SomeADay**, and may later become **Summer Day**. The implementation does not
-depend on the current name.
 
 ## Current status
 
@@ -50,13 +46,13 @@ Models are stored under `data/stanza/`, which is intentionally ignored by Git.
 Copy `.env.example` to the deployment environment. Set `fake` explicitly for
 offline development; production generation defaults to requiring a configured
 real command provider. Set
-`SOMEADAY_TTS_PROVIDER=command` and `SOMEADAY_TTS_COMMAND` for a local CLI TTS
+`SUMMERDAY_TTS_PROVIDER=command` and `SUMMERDAY_TTS_COMMAND` for a local CLI TTS
 engine. The command must include `{speed}` or `{wpm}` so learning and natural
 profiles can use different rates; `{output_path}` is optional and is appended
 as the final argument when omitted. French text is sent on stdin. For example:
 
 ```text
-SOMEADAY_TTS_COMMAND=my-tts --rate {wpm} --output {output_path}
+SUMMERDAY_TTS_COMMAND=my-tts --rate {wpm} --output {output_path}
 ```
 
 ## Run the application
@@ -121,9 +117,9 @@ Ollama configuration is optional:
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_CONTENT_MODEL=qwen3:8b
 OLLAMA_TIMEOUT_SECONDS=600
-SOMEADAY_TIMEZONE=America/Toronto
-SOMEADAY_DATA_DIR=data
-SOMEADAY_MEDIA_DIR=data/media
+SUMMERDAY_TIMEZONE=America/Toronto
+SUMMERDAY_DATA_DIR=data
+SUMMERDAY_MEDIA_DIR=data/media
 ```
 
 Ollama may use CPU when GPU capacity is unavailable. Stanza uses CPU by default;
@@ -158,7 +154,7 @@ validates the path and serves versioned files with immutable cache headers.
 ## Repository boundaries
 
 - Implementation code lives in this repository.
-- The nested `SomeADay-spec/` checkout contains private `SPEC.md` and `FUTURE.md`
+- The nested `SummerDay-spec/` checkout contains private `SPEC.md` and `FUTURE.md`
   files and is ignored by this repository.
 - Generated lesson data and NLP models live under ignored `data/`.
 - No private specification content should be copied into this README.
