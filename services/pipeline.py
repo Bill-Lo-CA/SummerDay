@@ -369,6 +369,35 @@ def generate_lesson(
     raise RuntimeError(f"Ollama output remained invalid after one repair: {json.dumps(errors, ensure_ascii=False)}")
 
 
+def draft_path(lesson_date: date) -> Path:
+    return DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
+
+
+def analysis_path(lesson_date: date) -> Path:
+    return DATA_DIR / "analysis" / f"{lesson_date.isoformat()}.json"
+
+
+def generate_content(lesson_date: date) -> Path:
+    draft = draft_path(lesson_date)
+    if draft.exists():
+        raise FileExistsError(f"Draft already exists: {draft}")
+    source, analysis = select_article(fetch_vikidia_articles())
+    diagnostics: list[dict] = []
+    record = {"source_article": asdict(source), "attempts": diagnostics}
+    try:
+        lesson = generate_lesson(source, lesson_date, analysis, diagnostics=diagnostics)
+    except RuntimeError:
+        write_generation_record(lesson_date, record)
+        raise
+    write_generation_record(lesson_date, record)
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    analysis_file = analysis_path(lesson_date)
+    analysis_file.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text(lesson.model_dump_json(indent=2) + "\n")
+    analysis_file.write_text(analysis.model_dump_json(indent=2) + "\n")
+    return draft
+
+
 def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
     diagnostics: list[dict] = []
@@ -431,10 +460,15 @@ def review(lesson_date: date) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or publish a daily lesson.")
-    parser.add_argument("command", choices=("generate", "review", "publish"))
+    parser.add_argument("command", choices=("generate", "generate-content", "review", "publish"))
     parser.add_argument("--date", type=date.fromisoformat, default=application_date())
     args = parser.parse_args()
-    path = {"generate": generate, "review": review, "publish": publish}[args.command](args.date)
+    path = {
+        "generate": generate,
+        "generate-content": generate_content,
+        "review": review,
+        "publish": publish,
+    }[args.command](args.date)
     print(path)
 
 
