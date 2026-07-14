@@ -113,6 +113,33 @@ def select_article(
     raise RuntimeError("Vikidia returned no article that passed A1 NLP suitability checks.")
 
 
+def find_suitable_article(
+    fetcher: Callable[[], list[SourceArticle]] | None = None,
+    analyzer: Callable[[str], NLPAnalysis] | None = None,
+    max_batches: int | None = None,
+) -> tuple[SourceArticle, NLPAnalysis]:
+    fetcher = fetcher or fetch_vikidia_articles
+    default_analyzer = analyzer is None
+    analyzer = analyzer or analyze_text
+    batches = max_batches or int(os.getenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "5"))
+    if batches <= 0:
+        raise ValueError("SUMMERDAY_VIKIDIA_MAX_BATCHES must be greater than zero")
+
+    last_error: RuntimeError | None = None
+    for batch in range(1, batches + 1):
+        try:
+            articles = fetcher()
+            return select_article(articles) if default_analyzer else select_article(articles, analyzer)
+        except RuntimeError as exc:
+            last_error = exc
+            print(f"Vikidia batch {batch}/{batches} skipped: {exc}")
+
+    message = f"Vikidia returned no A1-suitable article after {batches} batch(es)."
+    if last_error is not None:
+        message = f"{message} Last error: {last_error}"
+    raise RuntimeError(message)
+
+
 @dataclass(frozen=True)
 class VocabularyCandidate:
     id: str
@@ -430,7 +457,7 @@ def generate_content(lesson_date: date) -> Path:
     draft = draft_path(lesson_date)
     if draft.exists():
         raise FileExistsError(f"Draft already exists: {draft}")
-    source, analysis = select_article(fetch_vikidia_articles())
+    source, analysis = find_suitable_article()
     diagnostics: list[dict] = []
     record = {"source_article": asdict(source), "attempts": diagnostics}
     try:

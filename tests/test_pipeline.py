@@ -7,6 +7,7 @@ import pytest
 import services.pipeline as pipeline
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis
+from services.providers.ollama import OllamaContentProvider
 from services.pipeline import (
     SourceArticle,
     clean_segment,
@@ -283,3 +284,41 @@ def test_clean_segment_keeps_complete_sentences() -> None:
     segment = clean_segment(" ".join([sentence] * 10), minimum=20, maximum=30)
 
     assert segment == " ".join([sentence] * 2)
+
+
+def test_find_suitable_article_retries_until_a1_match() -> None:
+    unsuitable = SourceArticle(1, 1, "Dur", "https://example.test/dur", "now", "Texte difficile.")
+    suitable = SourceArticle(2, 1, "Simple", "https://example.test/simple", "now", "Texte simple.")
+    batches = [[unsuitable], [suitable]]
+
+    def analyzer(text: str) -> NLPAnalysis:
+        analysis = analysis_for(text)
+        classification = "suitable" if text == suitable.text else "unsuitable"
+        return analysis.model_copy(update={"suitability": analysis.suitability.model_copy(update={"classification": classification})})
+
+    article, _ = pipeline.find_suitable_article(lambda: batches.pop(0), analyzer, max_batches=2)
+
+    assert article == suitable
+    assert batches == []
+
+
+def test_find_suitable_article_reports_exhausted_batches() -> None:
+    article = SourceArticle(1, 1, "Dur", "https://example.test/dur", "now", "Texte difficile.")
+
+    def analyzer(text: str) -> NLPAnalysis:
+        analysis = analysis_for(text)
+        return analysis.model_copy(update={"suitability": analysis.suitability.model_copy(update={"classification": "unsuitable"})})
+
+    with pytest.raises(RuntimeError, match="after 2 batch"):
+        pipeline.find_suitable_article(lambda: [article], analyzer, max_batches=2)
+
+
+def test_ollama_timeout_error_identifies_provider(monkeypatch) -> None:
+    def timeout_urlopen(request, timeout):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("services.providers.ollama.urlopen", timeout_urlopen)
+    monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", "1")
+
+    with pytest.raises(TimeoutError, match="Ollama timed out after 1s"):
+        OllamaContentProvider(model="tiny", base_url="http://ollama.test").generate("prompt")
