@@ -8,6 +8,18 @@ from services.audio.publication import mark_audio_published, validate_publishabl
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis
 from services.providers.fake_tts import FakeTTSProvider
+from services.providers.tts import AudioGenerationResult
+
+
+class PublishableTTSProvider(FakeTTSProvider):
+    def synthesize(self, text, output_path, profile):
+        super().synthesize(text, output_path, profile)
+        return AudioGenerationResult(
+            provider="test",
+            model="test-tts",
+            mime_type="audio/wav",
+            target_wpm=float(profile.learning_target_wpm),
+        )
 
 
 class FailFirstVocabularyProvider(FakeTTSProvider):
@@ -43,7 +55,7 @@ def lesson_and_analysis() -> tuple[DailyLesson, NLPAnalysis]:
 def test_required_audio_package_can_be_published(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     lesson.pronunciation_focus.review_status = "approved"
-    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    attach_required_audio(lesson, analysis, PublishableTTSProvider(), tmp_path)
     assert lesson.pronunciation_focus.review_status == "approved"
     assert lesson.pronunciation_focus.reference_audio.review_status == "pending"
     lesson.pronunciation_focus.review_status = "approved"
@@ -52,6 +64,16 @@ def test_required_audio_package_can_be_published(tmp_path: Path) -> None:
     validate_publishable_lesson(lesson, tmp_path)
     mark_audio_published(lesson, tmp_path)
     assert json.loads((tmp_path / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
+
+
+def test_fake_audio_blocks_publication(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    lesson.pronunciation_focus.review_status = "approved"
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
+
+    with pytest.raises(ValueError, match="fake audio"):
+        validate_publishable_lesson(lesson, tmp_path)
 
 
 def test_published_audio_package_cannot_resume(tmp_path: Path) -> None:
@@ -70,7 +92,7 @@ def test_published_audio_package_cannot_resume(tmp_path: Path) -> None:
 def test_missing_vocabulary_audio_blocks_publication(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     lesson.pronunciation_focus.review_status = "approved"
-    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    attach_required_audio(lesson, analysis, PublishableTTSProvider(), tmp_path)
     lesson.pronunciation_focus.reference_audio.review_status = "approved"
     lesson.core_vocabulary[0].audio = None
 

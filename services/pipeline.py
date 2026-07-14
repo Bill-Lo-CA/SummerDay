@@ -412,7 +412,9 @@ def tts_provider():
         if not command:
             raise RuntimeError("SUMMERDAY_TTS_COMMAND is required for command TTS")
         return CommandTTSProvider(command, os.getenv("SUMMERDAY_TTS_MODEL", "configured"))
-    return FakeTTSProvider()
+    if provider_name == "fake":
+        return FakeTTSProvider()
+    raise ValueError(f"unknown TTS provider: {provider_name}")
 
 
 def generate_audio(lesson_date: date) -> Path:

@@ -13,6 +13,8 @@ class AudioGenerationResult:
     duration_ms: int | None = None
     voice: str | None = None
     speech_rate: float | None = None
+    target_wpm: float | None = None
+    length_scale: float | None = None
 
 
 class TTSProvider(Protocol):
