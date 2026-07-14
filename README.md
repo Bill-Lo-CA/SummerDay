@@ -43,7 +43,7 @@ uv run python -m services.nlp download
 
 Models are stored under `data/stanza/`, which is intentionally ignored by Git.
 
-Copy `.env.example` to the deployment environment. Set `fake` explicitly for
+Copy `.env.example` to `.env`; SummerDay loads it automatically. Set `fake` explicitly for
 offline development; production generation defaults to requiring a configured
 real command provider. Set
 `SUMMERDAY_TTS_PROVIDER=command` and `SUMMERDAY_TTS_COMMAND` for a local CLI TTS
