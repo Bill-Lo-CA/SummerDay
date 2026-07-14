@@ -289,12 +289,16 @@ def test_publish_recovers_after_final_manifest_write_failure(tmp_path: Path, mon
     lesson, data, media = publish_fixture(tmp_path)
     monkeypatch.setattr(pipeline, "DATA_DIR", data)
     monkeypatch.setattr(pipeline, "MEDIA_DIR", media)
-    original_replace = os.replace
-    monkeypatch.setattr(publication.os, "replace", lambda source, destination: (_ for _ in ()).throw(OSError("injected final failure")))
+    original_atomic_json = publication._atomic_json
+
+    def fail_final_manifest(path, value):
+        raise OSError("injected final failure")
+
+    monkeypatch.setattr(publication, "_atomic_json", fail_final_manifest)
 
     with pytest.raises(OSError, match="final failure"):
         pipeline.publish(date(2026, 7, 12))
 
-    monkeypatch.setattr(publication.os, "replace", original_replace)
+    monkeypatch.setattr(publication, "_atomic_json", original_atomic_json)
     pipeline.publish(date(2026, 7, 12))
     assert json.loads((media / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
