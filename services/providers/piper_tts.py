@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import time
 import wave
 
 from piper import PiperVoice, SynthesisConfig
@@ -33,14 +34,21 @@ class PiperTTSProvider:
         if length_scale <= 0:
             raise ValueError("Piper length scale must be greater than zero")
         temporary = output_path.with_suffix(output_path.suffix + ".tmp")
+        started_at = time.monotonic()
         try:
             with wave.open(str(temporary), "wb") as wav_file:
                 self.voice.synthesize_wav(text, wav_file, SynthesisConfig(length_scale=length_scale))
             metadata = wav_metadata(temporary)
             os.replace(temporary, output_path)
-        except Exception:
+        except Exception as exc:
             temporary.unlink(missing_ok=True)
-            raise
+            if isinstance(exc, ValueError):
+                raise
+            elapsed = time.monotonic() - started_at
+            raise RuntimeError(
+                f"Piper failed after {elapsed:.1f}s while synthesizing {len(text.split())} words "
+                f"with model {self.model_path}."
+            ) from exc
         return AudioGenerationResult(
             provider="piper",
             model=self.model_path.stem,

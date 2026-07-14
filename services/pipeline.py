@@ -3,7 +3,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -113,8 +113,31 @@ def select_article(
     raise RuntimeError("Vikidia returned no article that passed A1 NLP suitability checks.")
 
 
-def ollama_generate(prompt: str) -> dict:
-    return OllamaContentProvider(schema=LessonGeneration.model_json_schema()).generate(prompt)
+def find_suitable_article(
+    fetcher: Callable[[], list[SourceArticle]] | None = None,
+    analyzer: Callable[[str], NLPAnalysis] | None = None,
+    max_batches: int | None = None,
+) -> tuple[SourceArticle, NLPAnalysis]:
+    fetcher = fetcher or fetch_vikidia_articles
+    default_analyzer = analyzer is None
+    analyzer = analyzer or analyze_text
+    batches = max_batches or int(os.getenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "5"))
+    if batches <= 0:
+        raise ValueError("SUMMERDAY_VIKIDIA_MAX_BATCHES must be greater than zero")
+
+    last_error: RuntimeError | None = None
+    for batch in range(1, batches + 1):
+        try:
+            articles = fetcher()
+            return select_article(articles) if default_analyzer else select_article(articles, analyzer)
+        except RuntimeError as exc:
+            last_error = exc
+            print(f"Vikidia batch {batch}/{batches} skipped: {exc}")
+
+    message = f"Vikidia returned no A1-suitable article after {batches} batch(es)."
+    if last_error is not None:
+        message = f"{message} Last error: {last_error}"
+    raise RuntimeError(message)
 
 
 @dataclass(frozen=True)
@@ -189,7 +212,26 @@ def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
                     span = tokens[index : index + length]
                     if len(span) == length and span[-1].upos == "NOUN":
                         add_candidate(span, sentence.text)
-    return candidates
+    unique_candidates = []
+    seen_lexical_items = set()
+    for candidate in candidates:
+        lexical_item = candidate.lexical_item.casefold()
+        if lexical_item in seen_lexical_items:
+            continue
+        seen_lexical_items.add(lexical_item)
+        unique_candidates.append(replace(candidate, id=f"v{len(unique_candidates) + 1}"))
+    return unique_candidates
+
+
+def lesson_generation_schema(candidates: list[VocabularyCandidate]) -> dict:
+    schema = LessonGeneration.model_json_schema()
+    candidate_id_schema = schema["$defs"]["VocabularySelection"]["properties"]["candidate_id"]
+    candidate_id_schema["enum"] = [candidate.id for candidate in candidates]
+    candidate_id_schema["description"] = (
+        "Copy exactly one candidate ID from the vocabulary candidate list. "
+        "Never invent placeholder IDs such as VOCAB-001."
+    )
+    return schema
 
 
 def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
@@ -200,7 +242,7 @@ def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysi
         for item in candidates
     ]
     return f"""Create an A1 French lesson for {lesson_date.isoformat()} from only the source text below.
-Return JSON matching the supplied schema. Select 8–12 useful core vocabulary candidate IDs. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
+Return JSON matching the supplied schema. Select 8–12 different useful core vocabulary candidate IDs. Copy every candidate_id exactly from the candidate list. Use each candidate ID at most once. Do not select two candidates with the same lexical item. Every candidate_id must be copied exactly from the first column of the candidate list below. Valid IDs look like v1, v2, and v3. Never invent IDs such as VOCAB-001. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
 
 Set these fields exactly:
 id: vikidia-{source.page_id}-{source.revision_id}-{lesson_date.isoformat()}
@@ -261,6 +303,8 @@ def materialize_vocabulary(payload: dict, candidates: list[VocabularyCandidate])
     by_id = {candidate.id: candidate for candidate in candidates}
     items = []
     errors = []
+    selected_candidate_ids = set()
+    selected_lexical_items = {}
     for index, selection in enumerate(payload.get("core_vocabulary", [])):
         candidate_id = selection.get("candidate_id", "")
         candidate = by_id.get(candidate_id)
@@ -272,6 +316,29 @@ def materialize_vocabulary(payload: dict, candidates: list[VocabularyCandidate])
                 }
             )
             continue
+        if candidate_id in selected_candidate_ids:
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.candidate_id",
+                    "message": f"is selected more than once: {candidate_id}; each candidate ID may be used only once",
+                }
+            )
+            continue
+        lexical_item = candidate.lexical_item.casefold()
+        previous_candidate_id = selected_lexical_items.get(lexical_item)
+        if previous_candidate_id is not None:
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.candidate_id",
+                    "message": (
+                        f"{candidate_id} resolves to duplicate lexical item "
+                        f"'{candidate.lexical_item}', already selected by {previous_candidate_id}"
+                    ),
+                }
+            )
+            continue
+        selected_candidate_ids.add(candidate_id)
+        selected_lexical_items[lexical_item] = candidate_id
         items.append(
             {
                 **selection,
@@ -325,12 +392,15 @@ def generate_lesson(
     source: SourceArticle,
     lesson_date: date,
     analysis: NLPAnalysis,
-    generator: Callable[[str], dict] = ollama_generate,
+    generator: Callable[[str], dict] | None = None,
     diagnostics: list[dict] | None = None,
 ) -> DailyLesson:
     prompt = lesson_prompt(source, lesson_date, analysis)
     errors = []
     candidates = vocabulary_candidates(analysis)
+    allowed_candidate_ids = [candidate.id for candidate in candidates]
+    if generator is None:
+        generator = OllamaContentProvider(schema=lesson_generation_schema(candidates)).generate
     for attempt in range(2):
         raw_payload = None
         normalized_payload = None
@@ -364,6 +434,11 @@ def generate_lesson(
                 )
             prompt += (
                 "\n\nRepair the invalid JSON below. Return only replacement JSON.\n"
+                "Every core_vocabulary candidate_id must be copied exactly from the allowed ID list below.\n"
+                "Do not use placeholders such as VOCAB-001, VOCAB-002, or similar IDs.\n"
+                "Every candidate ID may appear at most once.\n"
+                "Every selected candidate must represent a different lexical item.\n"
+                f"Allowed candidate IDs:\n{json.dumps(allowed_candidate_ids, ensure_ascii=False)}\n"
                 f"Invalid payload:\n{json.dumps(raw_payload, ensure_ascii=False)}\n"
                 f"Validation errors:\n{json.dumps(errors, ensure_ascii=False)}"
             )
@@ -382,7 +457,7 @@ def generate_content(lesson_date: date) -> Path:
     draft = draft_path(lesson_date)
     if draft.exists():
         raise FileExistsError(f"Draft already exists: {draft}")
-    source, analysis = select_article(fetch_vikidia_articles())
+    source, analysis = find_suitable_article()
     diagnostics: list[dict] = []
     record = {"source_article": asdict(source), "attempts": diagnostics}
     try:
