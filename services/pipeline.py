@@ -20,6 +20,7 @@ from services.nlp import NLPAnalysis, analyze_text
 from services.providers.fake_tts import FakeTTSProvider
 from services.providers.command_tts import CommandTTSProvider
 from services.providers.ollama import OllamaContentProvider
+from services.providers.piper_tts import PiperTTSProvider
 
 
 VIKIDIA_API = "https://fr.vikidia.org/w/api.php"
@@ -262,7 +263,13 @@ def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
     lesson = generate_lesson(source, lesson_date, analysis)
     provider_name = os.getenv("SUMMERDAY_TTS_PROVIDER", "command")
-    if provider_name == "command":
+    if provider_name == "piper":
+        provider = PiperTTSProvider(
+            os.getenv("SUMMERDAY_PIPER_MODEL", "data/piper/fr_FR-siwis-medium.onnx"),
+            float(os.getenv("SUMMERDAY_PIPER_BASELINE_WPM", "100")),
+            float(os.getenv("SUMMERDAY_PIPER_LENGTH_SCALE", "1")),
+        )
+    elif provider_name == "command":
         command = os.getenv("SUMMERDAY_TTS_COMMAND")
         if not command:
             raise RuntimeError("SUMMERDAY_TTS_COMMAND is required for command TTS")
