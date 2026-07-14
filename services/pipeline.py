@@ -113,10 +113,6 @@ def select_article(
     raise RuntimeError("Vikidia returned no article that passed A1 NLP suitability checks.")
 
 
-def ollama_generate(prompt: str) -> dict:
-    return OllamaContentProvider(schema=LessonGeneration.model_json_schema()).generate(prompt)
-
-
 @dataclass(frozen=True)
 class VocabularyCandidate:
     id: str
@@ -192,6 +188,17 @@ def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
     return candidates
 
 
+def lesson_generation_schema(candidates: list[VocabularyCandidate]) -> dict:
+    schema = LessonGeneration.model_json_schema()
+    candidate_id_schema = schema["$defs"]["VocabularySelection"]["properties"]["candidate_id"]
+    candidate_id_schema["enum"] = [candidate.id for candidate in candidates]
+    candidate_id_schema["description"] = (
+        "Copy exactly one candidate ID from the vocabulary candidate list. "
+        "Never invent placeholder IDs such as VOCAB-001."
+    )
+    return schema
+
+
 def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
     candidates = vocabulary_candidates(analysis)
     candidate_text = [
@@ -200,7 +207,7 @@ def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysi
         for item in candidates
     ]
     return f"""Create an A1 French lesson for {lesson_date.isoformat()} from only the source text below.
-Return JSON matching the supplied schema. Select 8–12 useful core vocabulary candidate IDs. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
+Return JSON matching the supplied schema. Select 8–12 useful core vocabulary candidate IDs. Every candidate_id must be copied exactly from the first column of the candidate list below. Valid IDs look like v1, v2, and v3. Never invent IDs such as VOCAB-001. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
 
 Set these fields exactly:
 id: vikidia-{source.page_id}-{source.revision_id}-{lesson_date.isoformat()}
@@ -325,12 +332,15 @@ def generate_lesson(
     source: SourceArticle,
     lesson_date: date,
     analysis: NLPAnalysis,
-    generator: Callable[[str], dict] = ollama_generate,
+    generator: Callable[[str], dict] | None = None,
     diagnostics: list[dict] | None = None,
 ) -> DailyLesson:
     prompt = lesson_prompt(source, lesson_date, analysis)
     errors = []
     candidates = vocabulary_candidates(analysis)
+    allowed_candidate_ids = [candidate.id for candidate in candidates]
+    if generator is None:
+        generator = OllamaContentProvider(schema=lesson_generation_schema(candidates)).generate
     for attempt in range(2):
         raw_payload = None
         normalized_payload = None
@@ -364,6 +374,9 @@ def generate_lesson(
                 )
             prompt += (
                 "\n\nRepair the invalid JSON below. Return only replacement JSON.\n"
+                "Every core_vocabulary candidate_id must be copied exactly from the allowed ID list below.\n"
+                "Do not use placeholders such as VOCAB-001, VOCAB-002, or similar IDs.\n"
+                f"Allowed candidate IDs:\n{json.dumps(allowed_candidate_ids, ensure_ascii=False)}\n"
                 f"Invalid payload:\n{json.dumps(raw_payload, ensure_ascii=False)}\n"
                 f"Validation errors:\n{json.dumps(errors, ensure_ascii=False)}"
             )

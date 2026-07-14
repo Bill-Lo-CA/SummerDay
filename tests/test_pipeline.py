@@ -11,6 +11,7 @@ from services.pipeline import (
     SourceArticle,
     clean_segment,
     generate_lesson,
+    lesson_generation_schema,
     materialize_vocabulary,
     normalize_focus_evidence,
     validate_evidence,
@@ -151,6 +152,37 @@ def test_pipeline_validates_generated_lesson() -> None:
     assert lesson.core_vocabulary[1].lexical_item == "circuler"
 
 
+def test_lesson_generation_schema_allows_only_deterministic_candidate_ids() -> None:
+    candidates = vocabulary_candidates(candidate_analysis())
+
+    schema = lesson_generation_schema(candidates)
+    candidate_id_schema = schema["$defs"]["VocabularySelection"]["properties"]["candidate_id"]
+
+    assert candidate_id_schema["enum"] == [candidate.id for candidate in candidates]
+    assert "VOCAB-001" in candidate_id_schema["description"]
+
+
+def test_default_generator_uses_dynamic_candidate_schema(monkeypatch) -> None:
+    analysis = candidate_analysis()
+    source = SourceArticle(1, 2, "Ville", "https://example.test/ville", "now", analysis.sentences[0].text)
+    captured = {}
+
+    class Provider:
+        def __init__(self, schema) -> None:
+            captured["schema"] = schema
+
+        def generate(self, prompt: str) -> dict:
+            return generation_payload([f"v{index}" for index in range(1, 9)])
+
+    monkeypatch.setattr(pipeline, "OllamaContentProvider", Provider)
+
+    generate_lesson(source, date(2026, 7, 12), analysis)
+
+    assert captured["schema"]["$defs"]["VocabularySelection"]["properties"]["candidate_id"]["enum"] == [
+        candidate.id for candidate in vocabulary_candidates(analysis)
+    ]
+
+
 def test_pipeline_rejects_evidence_not_in_article() -> None:
     payload = json.loads(Path("content/fixtures/daily-lesson.json").read_text())
     payload["core_vocabulary"][0]["surface_form"] = "absent"
@@ -177,6 +209,7 @@ def test_pipeline_repairs_with_raw_payload_and_field_paths() -> None:
     assert lesson.core_vocabulary[0].surface_form == "Elle"
     assert diagnostics[0]["validation_errors"][0]["path"] == "core_vocabulary.0.candidate_id"
     assert '"candidate_id": "missing"' in prompts[1]
+    assert 'Allowed candidate IDs:\n["v1"' in prompts[1]
 
 
 def test_multi_token_candidates_preserve_infinitives_and_surfaces() -> None:
