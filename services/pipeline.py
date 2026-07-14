@@ -3,7 +3,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
 
-from services.api.schemas import DailyLesson
+from services.api.schemas import DailyLesson, LessonGeneration
 from services.audio.generation import attach_required_audio
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
 from services.config import application_date
@@ -113,19 +113,55 @@ def select_article(
 
 
 def ollama_generate(prompt: str) -> dict:
-    return OllamaContentProvider().generate(prompt)
+    return OllamaContentProvider(schema=LessonGeneration.model_json_schema()).generate(prompt)
+
+
+@dataclass(frozen=True)
+class VocabularyCandidate:
+    id: str
+    surface_form: str
+    lexical_item: str
+    part_of_speech: str
+    lemma: str
+    morphology: str | None
+    source_sentence: str
+
+
+class EvidenceValidationError(ValueError):
+    def __init__(self, errors: list[dict[str, str]]) -> None:
+        self.errors = errors
+        super().__init__("; ".join(f"{error['path']}: {error['message']}" for error in errors))
+
+
+def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
+    candidates = []
+    for sentence in analysis.sentences:
+        for token in sentence.tokens:
+            if token.upos in {"PUNCT", "PROPN"}:
+                continue
+            candidates.append(
+                VocabularyCandidate(
+                    id=f"v{len(candidates) + 1}",
+                    surface_form=token.text,
+                    lexical_item=token.lemma,
+                    part_of_speech=token.upos.lower(),
+                    lemma=token.lemma,
+                    morphology=token.feats,
+                    source_sentence=sentence.text,
+                )
+            )
+    return candidates
 
 
 def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysis) -> str:
-    tokens = [
-        f"{token.text}|{token.lemma}|{token.upos}|{token.feats or '_'}"
-        for sentence in analysis.sentences
-        for token in sentence.tokens
-        if token.upos != "PUNCT"
+    candidates = vocabulary_candidates(analysis)
+    candidate_text = [
+        f"{item.id}|{item.surface_form}|{item.lexical_item}|{item.part_of_speech}|"
+        f"{item.morphology or '_'}|{item.source_sentence}"
+        for item in candidates
     ]
     return f"""Create an A1 French lesson for {lesson_date.isoformat()} from only the source text below.
-Return JSON matching the supplied schema. Select 8–12 useful core lexical items. Keep pronominal verbs and multiword expressions complete. Every surface_form, source_sentence, morphology evidence, and pronunciation evidence must occur verbatim in article_text. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
-Use the deterministic NLP evidence below for lemmas, part of speech, and morphology. Avoid PROPN items.
+Return JSON matching the supplied schema. Select 8–12 useful core vocabulary candidate IDs. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
 
 Set these fields exactly:
 id: vikidia-{source.page_id}-{source.revision_id}-{lesson_date.isoformat()}
@@ -137,35 +173,37 @@ article_text: {source.text}
 Source text:
 {source.text}
 
-NLP tokens (surface|lemma|UPOS|features):
-{chr(10).join(tokens)}"""
+Vocabulary candidates (id|surface|lexical item|part of speech|morphology|source sentence):
+{chr(10).join(candidate_text)}"""
 
 
 def validate_evidence(lesson: DailyLesson) -> DailyLesson:
     items = lesson.core_vocabulary
     lexical_items = [item.lexical_item.casefold() for item in items]
+    errors = []
     if len(lexical_items) != len(set(lexical_items)):
-        raise ValueError("core vocabulary contains duplicates")
-    for item in items:
+        errors.append({"path": "core_vocabulary", "message": "contains duplicate lexical items"})
+    for index, item in enumerate(items):
         if item.surface_form not in lesson.article_text:
-            raise ValueError(f"surface form is absent from article: {item.surface_form}")
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.surface_form",
+                    "message": f"is absent from article: {item.surface_form}",
+                }
+            )
         if item.source_sentence not in lesson.article_text:
-            raise ValueError(f"source sentence is absent from article: {item.source_sentence}")
-    for focus in (lesson.morphology_focus, lesson.pronunciation_focus):
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.source_sentence",
+                    "message": f"is absent from article: {item.source_sentence}",
+                }
+            )
+    for name, focus in (("morphology_focus", lesson.morphology_focus), ("pronunciation_focus", lesson.pronunciation_focus)):
         if focus.evidence not in lesson.article_text:
-            raise ValueError(f"focus evidence is absent from article: {focus.evidence}")
+            errors.append({"path": f"{name}.evidence", "message": f"is absent from article: {focus.evidence}"})
+    if errors:
+        raise EvidenceValidationError(errors)
     return lesson
-
-
-def deduplicate_vocabulary(payload: dict) -> dict:
-    seen: set[str] = set()
-    items = []
-    for item in payload.get("core_vocabulary", []):
-        key = item.get("lexical_item", "").casefold().strip()
-        if key and key not in seen:
-            seen.add(key)
-            items.append(item)
-    return {**payload, "core_vocabulary": items}
 
 
 def apply_source_fields(payload: dict, source: SourceArticle, lesson_date: date) -> dict:
@@ -180,46 +218,35 @@ def apply_source_fields(payload: dict, source: SourceArticle, lesson_date: date)
     }
 
 
-def normalize_vocabulary(payload: dict, analysis: NLPAnalysis) -> dict:
-    tokens = [token for sentence in analysis.sentences for token in sentence.tokens]
-    for item in payload.get("core_vocabulary", []):
-        source_sentence = next(
-            (
-                sentence.text
-                for sentence in analysis.sentences
-                if item.get("surface_form", "").casefold() in sentence.text.casefold()
-            ),
-            None,
-        )
-        if source_sentence:
-            item["source_sentence"] = source_sentence
-        surface = item.get("surface_form", "").casefold().split()
-        matches = [
-            tokens[index : index + len(surface)]
-            for index in range(len(tokens) - len(surface) + 1)
-            if [token.text.casefold() for token in tokens[index : index + len(surface)]] == surface
-        ]
-        if not matches:
+def materialize_vocabulary(payload: dict, candidates: list[VocabularyCandidate]) -> dict:
+    by_id = {candidate.id: candidate for candidate in candidates}
+    items = []
+    errors = []
+    for index, selection in enumerate(payload.get("core_vocabulary", [])):
+        candidate_id = selection.get("candidate_id", "")
+        candidate = by_id.get(candidate_id)
+        if candidate is None:
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.candidate_id",
+                    "message": f"is not a known vocabulary candidate: {candidate_id}",
+                }
+            )
             continue
-        match = matches[0]
-        verbs = [token for token in match if token.upos in {"VERB", "AUX"}]
-        if len(match) == 1 and verbs:
-            item["lexical_item"] = verbs[0].lemma
-        reflexive = any(
-            token.text.casefold() in {"se", "s'", "s’"} or token.lemma.casefold() in {"se", "soi"}
-            for token in match
-        ) and verbs
-        if reflexive:
-            item["lexical_item"] = f"se {verbs[-1].lemma}"
-        if len(match) == 1 or reflexive:
-            head = verbs[0] if verbs else match[0]
-            item["lemma"] = head.lemma
-            item["part_of_speech"] = head.upos.lower()
-            item["morphology"] = head.feats
-    payload["core_vocabulary"] = [
-        item for item in payload.get("core_vocabulary", []) if item.get("part_of_speech") != "propn"
-    ]
-    return payload
+        items.append(
+            {
+                **selection,
+                "surface_form": candidate.surface_form,
+                "lexical_item": candidate.lexical_item,
+                "part_of_speech": candidate.part_of_speech,
+                "lemma": candidate.lemma,
+                "morphology": candidate.morphology,
+                "source_sentence": candidate.source_sentence,
+            }
+        )
+    if errors:
+        raise EvidenceValidationError(errors)
+    return {**payload, "core_vocabulary": items}
 
 
 def normalize_focus_evidence(payload: dict, analysis: NLPAnalysis) -> dict:
@@ -237,30 +264,83 @@ def normalize_focus_evidence(payload: dict, analysis: NLPAnalysis) -> dict:
     return payload
 
 
+def error_details(exc: Exception) -> list[dict[str, str]]:
+    if isinstance(exc, EvidenceValidationError):
+        return exc.errors
+    if isinstance(exc, ValidationError):
+        return [
+            {"path": ".".join(str(part) for part in error["loc"]), "message": error["msg"]}
+            for error in exc.errors(include_url=False)
+        ]
+    return [{"path": "$", "message": str(exc)}]
+
+
+def write_generation_record(lesson_date: date, record: dict) -> Path:
+    path = DATA_DIR / "generation" / f"{lesson_date.isoformat()}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+    return path
+
+
 def generate_lesson(
     source: SourceArticle,
     lesson_date: date,
     analysis: NLPAnalysis,
     generator: Callable[[str], dict] = ollama_generate,
+    diagnostics: list[dict] | None = None,
 ) -> DailyLesson:
     prompt = lesson_prompt(source, lesson_date, analysis)
-    error = ""
-    for _ in range(2):
+    errors = []
+    candidates = vocabulary_candidates(analysis)
+    for attempt in range(2):
+        raw_payload = None
+        normalized_payload = None
         try:
-            payload = apply_source_fields(generator(prompt), source, lesson_date)
-            payload = normalize_vocabulary(payload, analysis)
-            payload = normalize_focus_evidence(payload, analysis)
-            payload = deduplicate_vocabulary(payload)
-            return validate_evidence(DailyLesson.model_validate(payload))
-        except (ValidationError, ValueError, KeyError, json.JSONDecodeError) as exc:
-            error = str(exc)
-            prompt += f"\n\nRepair the JSON. Validation errors:\n{error}"
-    raise RuntimeError(f"Ollama output remained invalid after one repair: {error}")
+            raw_payload = generator(prompt)
+            payload = LessonGeneration.model_validate(raw_payload).model_dump()
+            payload = apply_source_fields(payload, source, lesson_date)
+            payload = materialize_vocabulary(payload, candidates)
+            normalized_payload = normalize_focus_evidence(payload, analysis)
+            lesson = validate_evidence(DailyLesson.model_validate(normalized_payload))
+            if diagnostics is not None:
+                diagnostics.append(
+                    {
+                        "attempt": attempt + 1,
+                        "raw_response": raw_payload,
+                        "normalized_payload": normalized_payload,
+                        "validation_errors": [],
+                    }
+                )
+            return lesson
+        except (ValidationError, EvidenceValidationError, KeyError, json.JSONDecodeError) as exc:
+            errors = error_details(exc)
+            if diagnostics is not None:
+                diagnostics.append(
+                    {
+                        "attempt": attempt + 1,
+                        "raw_response": raw_payload,
+                        "normalized_payload": normalized_payload,
+                        "validation_errors": errors,
+                    }
+                )
+            prompt += (
+                "\n\nRepair the invalid JSON below. Return only replacement JSON.\n"
+                f"Invalid payload:\n{json.dumps(raw_payload, ensure_ascii=False)}\n"
+                f"Validation errors:\n{json.dumps(errors, ensure_ascii=False)}"
+            )
+    raise RuntimeError(f"Ollama output remained invalid after one repair: {json.dumps(errors, ensure_ascii=False)}")
 
 
 def generate(lesson_date: date) -> Path:
     source, analysis = select_article(fetch_vikidia_articles())
-    lesson = generate_lesson(source, lesson_date, analysis)
+    diagnostics: list[dict] = []
+    record = {"source_article": asdict(source), "attempts": diagnostics}
+    try:
+        lesson = generate_lesson(source, lesson_date, analysis, diagnostics=diagnostics)
+    except RuntimeError:
+        write_generation_record(lesson_date, record)
+        raise
+    write_generation_record(lesson_date, record)
     provider_name = os.getenv("SUMMERDAY_TTS_PROVIDER", "command")
     if provider_name == "command":
         command = os.getenv("SUMMERDAY_TTS_COMMAND")
