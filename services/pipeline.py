@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from services.api.schemas import DailyLesson, LessonGeneration
-from services.audio.generation import attach_required_audio
+from services.audio.generation import AudioGenerationError, attach_required_audio
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
 from services.config import application_date
 from services.nlp import NLPAnalysis, analyze_text
@@ -369,7 +369,18 @@ def generate_lesson(
     raise RuntimeError(f"Ollama output remained invalid after one repair: {json.dumps(errors, ensure_ascii=False)}")
 
 
-def generate(lesson_date: date) -> Path:
+def draft_path(lesson_date: date) -> Path:
+    return DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
+
+
+def analysis_path(lesson_date: date) -> Path:
+    return DATA_DIR / "analysis" / f"{lesson_date.isoformat()}.json"
+
+
+def generate_content(lesson_date: date) -> Path:
+    draft = draft_path(lesson_date)
+    if draft.exists():
+        raise FileExistsError(f"Draft already exists: {draft}")
     source, analysis = select_article(fetch_vikidia_articles())
     diagnostics: list[dict] = []
     record = {"source_article": asdict(source), "attempts": diagnostics}
@@ -379,22 +390,45 @@ def generate(lesson_date: date) -> Path:
         write_generation_record(lesson_date, record)
         raise
     write_generation_record(lesson_date, record)
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    analysis_file = analysis_path(lesson_date)
+    analysis_file.parent.mkdir(parents=True, exist_ok=True)
+    draft.write_text(lesson.model_dump_json(indent=2) + "\n")
+    analysis_file.write_text(analysis.model_dump_json(indent=2) + "\n")
+    return draft
+
+
+def tts_provider():
     provider_name = os.getenv("SUMMERDAY_TTS_PROVIDER", "command")
     if provider_name == "command":
         command = os.getenv("SUMMERDAY_TTS_COMMAND")
         if not command:
             raise RuntimeError("SUMMERDAY_TTS_COMMAND is required for command TTS")
-        provider = CommandTTSProvider(command, os.getenv("SUMMERDAY_TTS_MODEL", "configured"))
-    else:
-        provider = FakeTTSProvider()
-    lesson = attach_required_audio(lesson, analysis, provider, MEDIA_DIR)
-    draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
-    analysis_path = DATA_DIR / "analysis" / f"{lesson_date.isoformat()}.json"
-    draft.parent.mkdir(parents=True, exist_ok=True)
-    analysis_path.parent.mkdir(parents=True, exist_ok=True)
-    draft.write_text(lesson.model_dump_json(indent=2) + "\n")
-    analysis_path.write_text(analysis.model_dump_json(indent=2) + "\n")
+        return CommandTTSProvider(command, os.getenv("SUMMERDAY_TTS_MODEL", "configured"))
+    return FakeTTSProvider()
+
+
+def generate_audio(lesson_date: date) -> Path:
+    draft = draft_path(lesson_date)
+    analysis_file = analysis_path(lesson_date)
+    if not draft.exists() or not analysis_file.exists():
+        raise FileNotFoundError("generate-content must complete before generate-audio")
+    lesson = DailyLesson.model_validate_json(draft.read_text())
+    analysis = NLPAnalysis.model_validate_json(analysis_file.read_text())
+
+    def save(current: DailyLesson) -> None:
+        draft.write_text(current.model_dump_json(indent=2) + "\n")
+
+    try:
+        attach_required_audio(lesson, analysis, tts_provider(), MEDIA_DIR, on_progress=save)
+    except AudioGenerationError:
+        raise
     return draft
+
+
+def generate(lesson_date: date) -> Path:
+    generate_content(lesson_date)
+    return generate_audio(lesson_date)
 
 
 def publish(lesson_date: date) -> Path:
@@ -424,17 +458,23 @@ def review(lesson_date: date) -> Path:
     data = json.loads(manifest.read_text())
     for asset in data["assets"]:
         if asset["asset_id"] == lesson.pronunciation_focus.reference_audio.asset_id:
-            asset["review_status"] = "approved"
+            asset["asset"]["review_status"] = "approved"
     manifest.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     return draft
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or publish a daily lesson.")
-    parser.add_argument("command", choices=("generate", "review", "publish"))
+    parser.add_argument("command", choices=("generate", "generate-content", "generate-audio", "review", "publish"))
     parser.add_argument("--date", type=date.fromisoformat, default=application_date())
     args = parser.parse_args()
-    path = {"generate": generate, "review": review, "publish": publish}[args.command](args.date)
+    path = {
+        "generate": generate,
+        "generate-content": generate_content,
+        "generate-audio": generate_audio,
+        "review": review,
+        "publish": publish,
+    }[args.command](args.date)
     print(path)
 
 

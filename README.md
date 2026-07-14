@@ -77,12 +77,18 @@ published. Before that, the API returns `404`.
 
 ## Generate and publish a lesson
 
-Generation retrieves a random Vikidia candidate, analyzes it with Stanza, asks
-the local Ollama model for structured teaching content, and writes a draft:
+Generation can be resumed in two stages. Content generation retrieves a random
+Vikidia candidate, analyzes it with Stanza, asks Ollama for structured teaching
+content, and writes the draft before any TTS work:
 
 ```bash
-uv run python -m services.pipeline generate
+uv run python -m services.pipeline generate-content
+uv run python -m services.pipeline generate-audio
 ```
+
+`generate-audio` reads the existing draft and analysis, retries only missing or
+failed assets, and never fetches a new article. `generate` remains a convenience
+command that runs both stages for a new date.
 
 Draft and NLP analysis files are written to:
 
