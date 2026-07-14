@@ -135,6 +135,29 @@ class EvidenceValidationError(ValueError):
 
 def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
     candidates = []
+
+    def add_candidate(tokens, source_sentence: str) -> None:
+        first = tokens[0]
+        verbs = [token for token in tokens if token.upos in {"VERB", "AUX"}]
+        reflexive = first.text.casefold() in {"se", "s'", "s’"} and verbs
+        if reflexive:
+            lexical_item = f"se {verbs[-1].lemma}"
+        elif first.upos in {"VERB", "AUX"}:
+            lexical_item = " ".join(token.lemma for token in tokens)
+        else:
+            lexical_item = " ".join(token.text for token in tokens)
+        candidates.append(
+            VocabularyCandidate(
+                id=f"v{len(candidates) + 1}",
+                surface_form=" ".join(token.text for token in tokens),
+                lexical_item=lexical_item,
+                part_of_speech="expression",
+                lemma=lexical_item,
+                morphology=verbs[0].feats if verbs else None,
+                source_sentence=source_sentence,
+            )
+        )
+
     for sentence in analysis.sentences:
         for token in sentence.tokens:
             if token.upos in {"PUNCT", "PROPN"}:
@@ -150,6 +173,21 @@ def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
                     source_sentence=sentence.text,
                 )
             )
+        tokens = sentence.tokens
+        for index, token in enumerate(tokens):
+            following = tokens[index + 1 :]
+            if token.text.casefold() in {"se", "s'", "s’"} and following and following[0].upos in {"VERB", "AUX"}:
+                add_candidate(tokens[index : index + 2], sentence.text)
+            if token.upos in {"VERB", "AUX"}:
+                if following and following[0].upos == "ADP":
+                    add_candidate(tokens[index : index + 2], sentence.text)
+                if len(following) >= 2 and following[0].upos == "DET" and following[1].upos == "NOUN":
+                    add_candidate(tokens[index : index + 3], sentence.text)
+            if token.upos == "DET":
+                for length in (2, 3):
+                    span = tokens[index : index + length]
+                    if len(span) == length and span[-1].upos == "NOUN":
+                        add_candidate(span, sentence.text)
     return candidates
 
 

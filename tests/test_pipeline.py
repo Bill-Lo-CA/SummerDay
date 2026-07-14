@@ -11,8 +11,10 @@ from services.pipeline import (
     SourceArticle,
     clean_segment,
     generate_lesson,
+    materialize_vocabulary,
     normalize_focus_evidence,
     validate_evidence,
+    vocabulary_candidates,
     write_generation_record,
 )
 
@@ -101,6 +103,41 @@ def generation_payload(candidate_ids: list[str]) -> dict:
     }
 
 
+def multiword_analysis() -> NLPAnalysis:
+    text = "Les enfants se réveillent et jouent un rôle."
+    words = [
+        ("Les", "le", "DET"),
+        ("enfants", "enfant", "NOUN"),
+        ("se", "soi", "PRON"),
+        ("réveillent", "réveiller", "VERB"),
+        ("et", "et", "CCONJ"),
+        ("jouent", "jouer", "VERB"),
+        ("un", "un", "DET"),
+        ("rôle", "rôle", "NOUN"),
+    ]
+    return NLPAnalysis.model_validate(
+        {
+            "sentences": [
+                {
+                    "text": text,
+                    "tokens": [
+                        {
+                            "text": surface,
+                            "lemma": lemma,
+                            "upos": upos,
+                            "feats": "Mood=Ind|VerbForm=Fin" if upos == "VERB" else None,
+                            "head": 0,
+                            "deprel": "dep",
+                        }
+                        for surface, lemma, upos in words
+                    ],
+                }
+            ],
+            "suitability": analysis_for(text).suitability.model_dump(),
+        }
+    )
+
+
 def test_pipeline_validates_generated_lesson() -> None:
     analysis = candidate_analysis()
     source = SourceArticle(1, 2, "Ville", "https://example.test/ville", "now", analysis.sentences[0].text)
@@ -140,6 +177,24 @@ def test_pipeline_repairs_with_raw_payload_and_field_paths() -> None:
     assert lesson.core_vocabulary[0].surface_form == "Elle"
     assert diagnostics[0]["validation_errors"][0]["path"] == "core_vocabulary.0.candidate_id"
     assert '"candidate_id": "missing"' in prompts[1]
+
+
+def test_multi_token_candidates_preserve_infinitives_and_surfaces() -> None:
+    candidates = vocabulary_candidates(multiword_analysis())
+    by_lexical_item = {candidate.lexical_item: candidate for candidate in candidates}
+    payload = {
+        "core_vocabulary": [
+            {"candidate_id": by_lexical_item["se réveiller"].id},
+            {"candidate_id": by_lexical_item["jouer un rôle"].id},
+        ]
+    }
+
+    materialized = materialize_vocabulary(payload, candidates)["core_vocabulary"]
+
+    assert materialized[0]["surface_form"] == "se réveillent"
+    assert materialized[0]["lexical_item"] == "se réveiller"
+    assert materialized[1]["surface_form"] == "jouent un rôle"
+    assert materialized[1]["lexical_item"] == "jouer un rôle"
 
 
 def test_generation_record_preserves_attempt_details(monkeypatch, tmp_path: Path) -> None:
