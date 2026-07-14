@@ -5,6 +5,12 @@ from services.api.schemas import DailyLesson
 from services.audio.validation import validate_audio_asset
 
 
+def validate_publishable_audio(asset, media_root: Path) -> None:
+    if asset.provider == "fake":
+        raise ValueError("fake audio cannot be published")
+    validate_audio_asset(asset, media_root)
+
+
 def validate_publishable_lesson(lesson: DailyLesson, media_root: Path) -> DailyLesson:
     if lesson.speech_profile is None or lesson.learning_audio is None:
         raise ValueError("published lesson requires a speech profile and learning audio")
@@ -19,19 +25,19 @@ def validate_publishable_lesson(lesson: DailyLesson, media_root: Path) -> DailyL
         or focus.reference_audio.review_status != "approved"
     ):
         raise ValueError("pronunciation focus audio requires approval")
-    validate_audio_asset(lesson.learning_audio, media_root)
+    validate_publishable_audio(lesson.learning_audio, media_root)
     for sentence in lesson.sentences:
-        validate_audio_asset(sentence.learning_audio, media_root)
+        validate_publishable_audio(sentence.learning_audio, media_root)
     for item in lesson.core_vocabulary:
         if item.audio is None:
             raise ValueError(f"vocabulary audio is missing: {item.lexical_item}")
-        validate_audio_asset(item.audio, media_root)
-    validate_audio_asset(focus.reference_audio, media_root)
+        validate_publishable_audio(item.audio, media_root)
+    validate_publishable_audio(focus.reference_audio, media_root)
     if lesson.natural_audio:
-        validate_audio_asset(lesson.natural_audio, media_root)
+        validate_publishable_audio(lesson.natural_audio, media_root)
     for sentence in lesson.sentences:
         if sentence.natural_audio:
-            validate_audio_asset(sentence.natural_audio, media_root)
+            validate_publishable_audio(sentence.natural_audio, media_root)
     return lesson
 
 

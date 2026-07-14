@@ -16,6 +16,10 @@ class AudioAssetRef(BaseModel):
     model: str = Field(min_length=1)
     voice: str | None = None
     speech_rate: float | None = Field(default=None, gt=0)
+    target_wpm: float | None = Field(default=None, gt=0)
+    measured_wpm: float | None = Field(default=None, gt=0)
+    length_scale: float | None = Field(default=None, gt=0)
+    sample_rate: int | None = Field(default=None, gt=0)
     review_status: ReviewStatus = "pending"
 
 

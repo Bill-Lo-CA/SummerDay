@@ -55,6 +55,28 @@ as the final argument when omitted. French text is sent on stdin. For example:
 SUMMERDAY_TTS_COMMAND=my-tts --rate {wpm} --output {output_path}
 ```
 
+### Piper
+
+Piper is installed with the project dependencies. Download a voice and its
+matching `.onnx.json` file into
+`data/piper/`:
+
+```bash
+mkdir -p data/piper
+uv run python -m piper.download_voices --data-dir data/piper fr_FR-siwis-medium
+```
+
+Configure the default voice with:
+
+```text
+SUMMERDAY_TTS_PROVIDER=piper
+SUMMERDAY_PIPER_MODEL=data/piper/fr_FR-siwis-medium.onnx
+```
+
+Use `fr_FR-tom-medium` as the alternative male voice. Piper converts the
+lesson target WPM to its `length_scale`; adjust `SUMMERDAY_PIPER_BASELINE_WPM`
+and `SUMMERDAY_PIPER_LENGTH_SCALE` after listening to generated audio.
+
 ## Run the application
 
 Start the API in one terminal:

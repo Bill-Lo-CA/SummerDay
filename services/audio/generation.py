@@ -9,7 +9,8 @@ from services.audio.models import AudioAssetRef, LessonSentence, SpeechProfile
 from services.audio.hashing import sha256_file
 from services.nlp import NLPAnalysis
 from services.providers.tts import AudioGenerationResult
-from services.audio.validation import validate_audio_asset
+from services.providers.fake_tts import FakeTTSProvider
+from services.audio.validation import validate_audio_asset, wav_metadata
 
 
 class Synthesizer(Protocol):
@@ -62,16 +63,22 @@ def _asset(
         if manifest.get("status") == "published":
             raise FileExistsError(f"published lesson audio is immutable: {lesson_id}")
     result = provider.synthesize(text, output, profile)
+    metadata = wav_metadata(output)
+    measured_wpm = len(text.split()) * 60_000 / metadata.duration_ms
     return AudioAssetRef(
         asset_id=f"{lesson_id}:{relative_path}",
         path=relative_path,
         sha256=sha256_file(output),
         mime_type=result.mime_type,
-        duration_ms=result.duration_ms,
+        duration_ms=metadata.duration_ms,
         provider=result.provider,
         model=result.model,
         voice=result.voice,
-        speech_rate=result.speech_rate,
+        speech_rate=measured_wpm,
+        target_wpm=result.target_wpm or float(profile.learning_target_wpm),
+        measured_wpm=measured_wpm,
+        length_scale=result.length_scale,
+        sample_rate=metadata.sample_rate,
         review_status="pending",
     )
 
@@ -110,7 +117,7 @@ def attach_required_audio(
 
     def run(task: AudioTask, existing, assign: Callable[[AudioAssetRef], None]) -> None:
         try:
-            if existing is not None:
+            if existing is not None and not (existing.provider == "fake" and not isinstance(provider, FakeTTSProvider)):
                 try:
                     validate_audio_asset(existing, media_root)
                     asset = existing

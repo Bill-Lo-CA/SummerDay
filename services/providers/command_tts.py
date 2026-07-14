@@ -36,5 +36,5 @@ class CommandTTSProvider:
             provider="command",
             model=self.model,
             mime_type="audio/wav",
-            speech_rate=float(profile.learning_target_wpm),
+            target_wpm=float(profile.learning_target_wpm),
         )
