@@ -5,11 +5,14 @@ from pathlib import Path
 import pytest
 
 from services.audio.generation import AudioGenerationError, attach_required_audio
+from services.audio.generation import synthesis_fingerprint
+from services.audio.models import SpeechProfile
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis
 from services.providers.fake_tts import FakeTTSProvider
 from services.providers.tts import AudioGenerationResult
+from services.providers.piper_tts import PiperTTSProvider
 
 
 class PublishableTTSProvider(FakeTTSProvider):
@@ -178,6 +181,32 @@ def test_audio_regenerates_when_spoken_text_changes(tmp_path: Path) -> None:
     attach_required_audio(lesson, analysis, provider, tmp_path)
 
     assert len(provider.calls) == calls + 1
+
+
+def test_piper_fingerprint_uses_effective_length_scale() -> None:
+    provider = object.__new__(PiperTTSProvider)
+    provider.model_path = Path("voice.onnx")
+    provider.baseline_wpm = 100
+    provider.length_scale = 1
+    profile = SpeechProfile(
+        level="A1",
+        learning_target_wpm=85,
+        pause_style="clear",
+        articulation="natural",
+        connected_speech="light",
+    )
+    result = AudioGenerationResult(
+        provider="piper",
+        model="voice",
+        voice="voice",
+        mime_type="audio/wav",
+        target_wpm=float(profile.learning_target_wpm),
+        length_scale=100 / profile.learning_target_wpm,
+    )
+
+    assert synthesis_fingerprint("Bonjour", provider, profile) == synthesis_fingerprint(
+        "Bonjour", provider, profile, result
+    )
 
 
 def test_publish_recovers_after_analysis_write_failure(tmp_path: Path, monkeypatch) -> None:

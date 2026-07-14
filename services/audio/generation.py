@@ -64,7 +64,12 @@ def _provider_metadata(provider: Synthesizer, profile: SpeechProfile, result: Au
     else:
         voice = getattr(provider, "voice", None)
     voice = getattr(voice, "name", voice)
-    length_scale = result.length_scale if result else getattr(provider, "length_scale", None)
+    if result:
+        length_scale = result.length_scale
+    elif provider_type == "PiperTTSProvider":
+        length_scale = provider.length_scale * provider.baseline_wpm / profile.learning_target_wpm
+    else:
+        length_scale = getattr(provider, "length_scale", None)
     return {
         "provider": name,
         "model": str(model),
