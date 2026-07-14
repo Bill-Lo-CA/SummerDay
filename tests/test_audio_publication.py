@@ -1,14 +1,18 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from services.audio.generation import AudioGenerationError, attach_required_audio
+from services.audio.generation import synthesis_fingerprint
+from services.audio.models import SpeechProfile
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis
 from services.providers.fake_tts import FakeTTSProvider
 from services.providers.tts import AudioGenerationResult
+from services.providers.piper_tts import PiperTTSProvider
 
 
 class PublishableTTSProvider(FakeTTSProvider):
@@ -165,3 +169,75 @@ def test_audio_generation_resumes_only_failed_assets(tmp_path: Path) -> None:
     assert lesson.core_vocabulary[0].audio is not None
     with pytest.raises(ValueError, match="requires approval"):
         validate_publishable_lesson(lesson, tmp_path)
+
+
+def test_audio_regenerates_when_spoken_text_changes(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    provider = ReplacementTTSProvider()
+    attach_required_audio(lesson, analysis, provider, tmp_path)
+    calls = len(provider.calls)
+
+    lesson.article_text += " Nouvelle phrase."
+    attach_required_audio(lesson, analysis, provider, tmp_path)
+
+    assert len(provider.calls) == calls + 1
+
+
+def test_piper_fingerprint_uses_effective_length_scale() -> None:
+    provider = object.__new__(PiperTTSProvider)
+    provider.model_path = Path("voice.onnx")
+    provider.baseline_wpm = 100
+    provider.length_scale = 1
+    profile = SpeechProfile(
+        level="A1",
+        learning_target_wpm=85,
+        pause_style="clear",
+        articulation="natural",
+        connected_speech="light",
+    )
+    result = AudioGenerationResult(
+        provider="piper",
+        model="voice",
+        voice="voice",
+        mime_type="audio/wav",
+        target_wpm=float(profile.learning_target_wpm),
+        length_scale=100 / profile.learning_target_wpm,
+    )
+
+    assert synthesis_fingerprint("Bonjour", provider, profile) == synthesis_fingerprint(
+        "Bonjour", provider, profile, result
+    )
+
+
+def test_publish_recovers_after_analysis_write_failure(tmp_path: Path, monkeypatch) -> None:
+    from services import pipeline
+
+    lesson, analysis = lesson_and_analysis()
+    lesson.pronunciation_focus.review_status = "approved"
+    attach_required_audio(lesson, analysis, PublishableTTSProvider(), tmp_path / "media")
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
+    data = tmp_path / "data"
+    (data / "drafts").mkdir(parents=True)
+    (data / "analysis").mkdir()
+    draft = data / "drafts" / "2026-07-12.json"
+    analysis_path = data / "analysis" / draft.name
+    draft.write_text(lesson.model_dump_json())
+    analysis_path.write_text(analysis.model_dump_json())
+    monkeypatch.setattr(pipeline, "DATA_DIR", data)
+    monkeypatch.setattr(pipeline, "MEDIA_DIR", tmp_path / "media")
+    original_replace = os.replace
+    calls = {"count": 0}
+
+    def fail_once(source, destination):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("injected analysis failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(pipeline.os, "replace", fail_once)
+    with pytest.raises(OSError, match="analysis failure"):
+        pipeline.publish(__import__("datetime").date(2026, 7, 12))
+
+    monkeypatch.setattr(pipeline.os, "replace", original_replace)
+    pipeline.publish(__import__("datetime").date(2026, 7, 12))
+    assert json.loads((tmp_path / "media" / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"

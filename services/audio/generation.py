@@ -45,6 +45,57 @@ def sentence_id(index: int, text: str) -> str:
     return f"sentence-{index:03d}-{digest}"
 
 
+def _provider_metadata(provider: Synthesizer, profile: SpeechProfile, result: AudioGenerationResult | None = None) -> dict:
+    provider_type = type(provider).__name__
+    name = {"FakeTTSProvider": "fake", "PiperTTSProvider": "piper", "CommandTTSProvider": "command"}.get(
+        provider_type, result.provider if result else provider_type
+    )
+    if result:
+        model = result.model
+    elif provider_type == "FakeTTSProvider":
+        model = "fake-tts"
+    else:
+        model = getattr(provider, "model", getattr(provider, "model_path", "configured"))
+    model = getattr(model, "stem", model)
+    if result:
+        voice = result.voice
+    elif provider_type == "PiperTTSProvider":
+        voice = getattr(getattr(provider, "model_path", None), "stem", None)
+    else:
+        voice = getattr(provider, "voice", None)
+    voice = getattr(voice, "name", voice)
+    if result:
+        length_scale = result.length_scale
+    elif provider_type == "PiperTTSProvider":
+        length_scale = provider.length_scale * provider.baseline_wpm / profile.learning_target_wpm
+    else:
+        length_scale = getattr(provider, "length_scale", None)
+    return {
+        "provider": name,
+        "model": str(model),
+        "voice": voice,
+        "target_wpm": profile.learning_target_wpm,
+        "length_scale": length_scale,
+    }
+
+
+def synthesis_fingerprint(text: str, provider: Synthesizer, profile: SpeechProfile, result: AudioGenerationResult | None = None) -> str:
+    payload = {"text": text, **_provider_metadata(provider, profile, result)}
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _fingerprint_for_asset(text: str, profile: SpeechProfile, asset: AudioAssetRef) -> str:
+    payload = {
+        "text": text,
+        "provider": asset.provider,
+        "model": asset.model,
+        "voice": asset.voice,
+        "target_wpm": profile.learning_target_wpm,
+        "length_scale": asset.length_scale,
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
 def _asset(
     lesson_id: str,
     relative_path: str,
@@ -79,6 +130,7 @@ def _asset(
         measured_wpm=measured_wpm,
         length_scale=result.length_scale,
         sample_rate=metadata.sample_rate,
+        synthesis_fingerprint=synthesis_fingerprint(text, provider, profile, result),
         review_status="pending",
     )
 
@@ -117,7 +169,17 @@ def attach_required_audio(
 
     def run(task: AudioTask, existing, assign: Callable[[AudioAssetRef], None]) -> None:
         try:
-            if existing is not None and not (existing.provider == "fake" and not isinstance(provider, FakeTTSProvider)):
+            expected_fingerprint = (
+                synthesis_fingerprint(task.text, provider, profile)
+                if type(provider).__name__ in {"FakeTTSProvider", "PiperTTSProvider", "CommandTTSProvider"}
+                else _fingerprint_for_asset(task.text, profile, existing) if existing is not None else None
+            )
+            can_reuse = (
+                existing is not None
+                and (isinstance(provider, FakeTTSProvider) or existing.provider != "fake")
+                and existing.synthesis_fingerprint == expected_fingerprint
+            )
+            if can_reuse:
                 try:
                     validate_audio_asset(existing, media_root)
                     asset = existing

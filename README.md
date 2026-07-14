@@ -148,7 +148,11 @@ OLLAMA_TIMEOUT_SECONDS=600
 SUMMERDAY_TIMEZONE=America/Toronto
 SUMMERDAY_DATA_DIR=data
 SUMMERDAY_MEDIA_DIR=data/media
+SUMMERDAY_VIKIDIA_MAX_BATCHES=5
 ```
+
+`SUMMERDAY_VIKIDIA_MAX_BATCHES` controls how many random Vikidia batches content
+generation tries before failing. It must be a positive integer.
 
 Ollama may use CPU when GPU capacity is unavailable. Stanza uses CPU by default;
 set `STANZA_USE_GPU=1` only when that is deliberate.

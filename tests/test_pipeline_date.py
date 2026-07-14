@@ -51,6 +51,30 @@ def test_generate_content_persists_draft_and_analysis_before_audio(tmp_path: Pat
     assert (tmp_path / "analysis" / "2026-07-12.json").exists()
 
 
+def test_generate_content_persists_provider_failure_before_reraising(tmp_path: Path, monkeypatch) -> None:
+    lesson_date = date(2026, 7, 12)
+    analysis = NLPAnalysis.model_validate({"sentences": [], "suitability": {
+        "classification": "suitable", "word_count": 1, "sentence_count": 1,
+        "average_sentence_length": 1, "longest_sentence_length": 1,
+        "proper_noun_density": 0, "number_density": 0, "morphology_opportunities": 0,
+    }})
+    source = pipeline.SourceArticle(1, 2, "Abeille", "https://example.test", "now", "Texte.")
+    monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "find_suitable_article", lambda: (source, analysis))
+    monkeypatch.setattr(pipeline, "generate_lesson", lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("timed out")))
+
+    with pytest.raises(TimeoutError):
+        pipeline.generate_content(lesson_date)
+
+    record = __import__("json").loads((tmp_path / "generation" / "2026-07-12.json").read_text())
+    assert record["terminal_failure"] == {
+        "exception_type": "TimeoutError",
+        "message": "timed out",
+        "stage": "content_generation",
+        "provider": "ollama",
+    }
+
+
 def test_generate_audio_uses_existing_draft_without_fetching_content(tmp_path: Path, monkeypatch) -> None:
     lesson_date = date(2026, 7, 12)
     lesson = DailyLesson.model_validate_json(Path("content/fixtures/daily-lesson.json").read_text())
