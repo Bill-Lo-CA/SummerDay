@@ -3,7 +3,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -185,7 +185,15 @@ def vocabulary_candidates(analysis: NLPAnalysis) -> list[VocabularyCandidate]:
                     span = tokens[index : index + length]
                     if len(span) == length and span[-1].upos == "NOUN":
                         add_candidate(span, sentence.text)
-    return candidates
+    unique_candidates = []
+    seen_lexical_items = set()
+    for candidate in candidates:
+        lexical_item = candidate.lexical_item.casefold()
+        if lexical_item in seen_lexical_items:
+            continue
+        seen_lexical_items.add(lexical_item)
+        unique_candidates.append(replace(candidate, id=f"v{len(unique_candidates) + 1}"))
+    return unique_candidates
 
 
 def lesson_generation_schema(candidates: list[VocabularyCandidate]) -> dict:
@@ -207,7 +215,7 @@ def lesson_prompt(source: SourceArticle, lesson_date: date, analysis: NLPAnalysi
         for item in candidates
     ]
     return f"""Create an A1 French lesson for {lesson_date.isoformat()} from only the source text below.
-Return JSON matching the supplied schema. Select 8–12 useful core vocabulary candidate IDs. Every candidate_id must be copied exactly from the first column of the candidate list below. Valid IDs look like v1, v2, and v3. Never invent IDs such as VOCAB-001. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
+Return JSON matching the supplied schema. Select 8–12 different useful core vocabulary candidate IDs. Copy every candidate_id exactly from the candidate list. Use each candidate ID at most once. Do not select two candidates with the same lexical item. Every candidate_id must be copied exactly from the first column of the candidate list below. Valid IDs look like v1, v2, and v3. Never invent IDs such as VOCAB-001. Do not emit or rewrite surface forms, lemmas, part of speech, morphology, or source sentences; the pipeline fills those from the selected IDs. Definitions must be short French explanations; English hints are rescue translations. Do not invent source facts.
 
 Set these fields exactly:
 id: vikidia-{source.page_id}-{source.revision_id}-{lesson_date.isoformat()}
@@ -268,6 +276,8 @@ def materialize_vocabulary(payload: dict, candidates: list[VocabularyCandidate])
     by_id = {candidate.id: candidate for candidate in candidates}
     items = []
     errors = []
+    selected_candidate_ids = set()
+    selected_lexical_items = {}
     for index, selection in enumerate(payload.get("core_vocabulary", [])):
         candidate_id = selection.get("candidate_id", "")
         candidate = by_id.get(candidate_id)
@@ -279,6 +289,29 @@ def materialize_vocabulary(payload: dict, candidates: list[VocabularyCandidate])
                 }
             )
             continue
+        if candidate_id in selected_candidate_ids:
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.candidate_id",
+                    "message": f"is selected more than once: {candidate_id}; each candidate ID may be used only once",
+                }
+            )
+            continue
+        lexical_item = candidate.lexical_item.casefold()
+        previous_candidate_id = selected_lexical_items.get(lexical_item)
+        if previous_candidate_id is not None:
+            errors.append(
+                {
+                    "path": f"core_vocabulary.{index}.candidate_id",
+                    "message": (
+                        f"{candidate_id} resolves to duplicate lexical item "
+                        f"'{candidate.lexical_item}', already selected by {previous_candidate_id}"
+                    ),
+                }
+            )
+            continue
+        selected_candidate_ids.add(candidate_id)
+        selected_lexical_items[lexical_item] = candidate_id
         items.append(
             {
                 **selection,
@@ -376,6 +409,8 @@ def generate_lesson(
                 "\n\nRepair the invalid JSON below. Return only replacement JSON.\n"
                 "Every core_vocabulary candidate_id must be copied exactly from the allowed ID list below.\n"
                 "Do not use placeholders such as VOCAB-001, VOCAB-002, or similar IDs.\n"
+                "Every candidate ID may appear at most once.\n"
+                "Every selected candidate must represent a different lexical item.\n"
                 f"Allowed candidate IDs:\n{json.dumps(allowed_candidate_ids, ensure_ascii=False)}\n"
                 f"Invalid payload:\n{json.dumps(raw_payload, ensure_ascii=False)}\n"
                 f"Validation errors:\n{json.dumps(errors, ensure_ascii=False)}"

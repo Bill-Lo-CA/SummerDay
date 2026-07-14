@@ -230,6 +230,28 @@ def test_multi_token_candidates_preserve_infinitives_and_surfaces() -> None:
     assert materialized[1]["lexical_item"] == "jouer un rôle"
 
 
+def test_vocabulary_candidates_have_unique_lexical_items() -> None:
+    analysis = candidate_analysis()
+    analysis.sentences.append(analysis.sentences[0].model_copy(deep=True))
+
+    candidates = vocabulary_candidates(analysis)
+    lexical_items = [candidate.lexical_item.casefold() for candidate in candidates]
+
+    assert len(lexical_items) == len(set(lexical_items))
+    assert [candidate.id for candidate in candidates] == [f"v{index}" for index in range(1, len(candidates) + 1)]
+
+
+def test_materialize_rejects_repeated_candidate_id() -> None:
+    candidates = vocabulary_candidates(candidate_analysis())
+    candidate_id = candidates[0].id
+
+    with pytest.raises(ValueError, match="selected more than once"):
+        materialize_vocabulary(
+            {"core_vocabulary": [{"candidate_id": candidate_id}, {"candidate_id": candidate_id}]},
+            candidates,
+        )
+
+
 def test_generation_record_preserves_attempt_details(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
     record = {"source_article": {"title": "Ville"}, "attempts": [{"raw_response": {"title": "x"}, "normalized_payload": None, "validation_errors": [{"path": "title", "message": "missing"}]}]}
