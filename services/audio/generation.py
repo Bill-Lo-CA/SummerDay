@@ -91,6 +91,8 @@ def attach_required_audio(
     manifest_path = package / "manifest.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
+        if manifest.get("status") == "published":
+            raise FileExistsError(f"published lesson audio is immutable: {lesson.id}")
     else:
         manifest = {"lesson_id": lesson.id, "status": "pending", "assets": []}
     entries = {

@@ -54,6 +54,19 @@ def test_required_audio_package_can_be_published(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
 
 
+def test_published_audio_package_cannot_resume(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    mark_audio_published(lesson, tmp_path)
+    manifest_path = tmp_path / "lessons" / lesson.id / "manifest.json"
+    manifest = manifest_path.read_text()
+
+    with pytest.raises(FileExistsError, match="immutable"):
+        attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+
+    assert manifest_path.read_text() == manifest
+
+
 def test_missing_vocabulary_audio_blocks_publication(tmp_path: Path) -> None:
     lesson, analysis = lesson_and_analysis()
     lesson.pronunciation_focus.review_status = "approved"
