@@ -1,5 +1,7 @@
 import json
 import os
+from datetime import date
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ from services.audio.generation import AudioGenerationError, attach_required_audi
 from services.audio.generation import synthesis_fingerprint
 from services.audio.models import SpeechProfile
 from services.audio.publication import mark_audio_published, validate_publishable_lesson
+import services.audio.publication as publication
 from services.api.schemas import DailyLesson
 from services.nlp import NLPAnalysis
 from services.providers.fake_tts import FakeTTSProvider
@@ -69,6 +72,20 @@ def lesson_and_analysis() -> tuple[DailyLesson, NLPAnalysis]:
         },
     })
     return lesson, analysis
+
+
+def publish_fixture(tmp_path: Path) -> tuple[DailyLesson, Path, Path]:
+    lesson, analysis = lesson_and_analysis()
+    lesson.pronunciation_focus.review_status = "approved"
+    media = tmp_path / "media"
+    attach_required_audio(lesson, analysis, PublishableTTSProvider(), media)
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
+    data = tmp_path / "data"
+    (data / "drafts").mkdir(parents=True)
+    (data / "analysis").mkdir()
+    (data / "drafts" / "2026-07-12.json").write_text(lesson.model_dump_json())
+    (data / "analysis" / "2026-07-12.json").write_text(analysis.model_dump_json())
+    return lesson, data, media
 
 
 def test_required_audio_package_can_be_published(tmp_path: Path) -> None:
@@ -209,35 +226,75 @@ def test_piper_fingerprint_uses_effective_length_scale() -> None:
     )
 
 
-def test_publish_recovers_after_analysis_write_failure(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("change", ["provider", "model", "voice", "text", "speed"])
+def test_synthesis_fingerprint_changes_for_each_synthesis_input(change: str) -> None:
+    provider = object.__new__(PiperTTSProvider)
+    provider.model_path = Path("voice.onnx")
+    provider.baseline_wpm = 100
+    provider.length_scale = 1
+    profile = SpeechProfile(
+        level="A1",
+        learning_target_wpm=85,
+        pause_style="clear",
+        articulation="natural",
+        connected_speech="light",
+    )
+    result = AudioGenerationResult(
+        provider="piper",
+        model="voice",
+        voice="voice",
+        mime_type="audio/wav",
+        target_wpm=85,
+        length_scale=100 / 85,
+    )
+    changed_result = replace(result, **{"provider": "other" if change == "provider" else result.provider,
+        "model": "other" if change == "model" else result.model,
+        "voice": "other" if change == "voice" else result.voice,
+        "length_scale": 2 if change == "speed" else result.length_scale})
+    changed_profile = profile.model_copy(update={"learning_target_wpm": 90}) if change == "speed" else profile
+    changed_text = "Au revoir" if change == "text" else "Bonjour"
+    changed_provider = object.__new__(FakeTTSProvider) if change == "provider" else provider
+
+    assert synthesis_fingerprint("Bonjour", provider, profile, result) != synthesis_fingerprint(
+        changed_text, changed_provider, changed_profile, changed_result
+    )
+@pytest.mark.parametrize("fail_at", [1, 2, 3])
+def test_publish_recovers_after_each_pipeline_write_boundary(tmp_path: Path, monkeypatch, fail_at: int) -> None:
     from services import pipeline
 
-    lesson, analysis = lesson_and_analysis()
-    lesson.pronunciation_focus.review_status = "approved"
-    attach_required_audio(lesson, analysis, PublishableTTSProvider(), tmp_path / "media")
-    lesson.pronunciation_focus.reference_audio.review_status = "approved"
-    data = tmp_path / "data"
-    (data / "drafts").mkdir(parents=True)
-    (data / "analysis").mkdir()
-    draft = data / "drafts" / "2026-07-12.json"
-    analysis_path = data / "analysis" / draft.name
-    draft.write_text(lesson.model_dump_json())
-    analysis_path.write_text(analysis.model_dump_json())
+    lesson, data, media = publish_fixture(tmp_path)
     monkeypatch.setattr(pipeline, "DATA_DIR", data)
-    monkeypatch.setattr(pipeline, "MEDIA_DIR", tmp_path / "media")
+    monkeypatch.setattr(pipeline, "MEDIA_DIR", media)
     original_replace = os.replace
     calls = {"count": 0}
 
     def fail_once(source, destination):
         calls["count"] += 1
-        if calls["count"] == 2:
-            raise OSError("injected analysis failure")
+        if calls["count"] == fail_at:
+            raise OSError("injected publication failure")
         original_replace(source, destination)
 
     monkeypatch.setattr(pipeline.os, "replace", fail_once)
-    with pytest.raises(OSError, match="analysis failure"):
-        pipeline.publish(__import__("datetime").date(2026, 7, 12))
+    with pytest.raises(OSError, match="publication failure"):
+        pipeline.publish(date(2026, 7, 12))
 
     monkeypatch.setattr(pipeline.os, "replace", original_replace)
-    pipeline.publish(__import__("datetime").date(2026, 7, 12))
-    assert json.loads((tmp_path / "media" / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
+    pipeline.publish(date(2026, 7, 12))
+    assert json.loads((media / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
+
+
+def test_publish_recovers_after_final_manifest_write_failure(tmp_path: Path, monkeypatch) -> None:
+    from services import pipeline
+
+    lesson, data, media = publish_fixture(tmp_path)
+    monkeypatch.setattr(pipeline, "DATA_DIR", data)
+    monkeypatch.setattr(pipeline, "MEDIA_DIR", media)
+    original_replace = os.replace
+    monkeypatch.setattr(publication.os, "replace", lambda source, destination: (_ for _ in ()).throw(OSError("injected final failure")))
+
+    with pytest.raises(OSError, match="final failure"):
+        pipeline.publish(date(2026, 7, 12))
+
+    monkeypatch.setattr(publication.os, "replace", original_replace)
+    pipeline.publish(date(2026, 7, 12))
+    assert json.loads((media / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"
