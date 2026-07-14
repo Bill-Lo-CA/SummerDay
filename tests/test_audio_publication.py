@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -165,3 +166,49 @@ def test_audio_generation_resumes_only_failed_assets(tmp_path: Path) -> None:
     assert lesson.core_vocabulary[0].audio is not None
     with pytest.raises(ValueError, match="requires approval"):
         validate_publishable_lesson(lesson, tmp_path)
+
+
+def test_audio_regenerates_when_spoken_text_changes(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    provider = ReplacementTTSProvider()
+    attach_required_audio(lesson, analysis, provider, tmp_path)
+    calls = len(provider.calls)
+
+    lesson.article_text += " Nouvelle phrase."
+    attach_required_audio(lesson, analysis, provider, tmp_path)
+
+    assert len(provider.calls) == calls + 1
+
+
+def test_publish_recovers_after_analysis_write_failure(tmp_path: Path, monkeypatch) -> None:
+    from services import pipeline
+
+    lesson, analysis = lesson_and_analysis()
+    lesson.pronunciation_focus.review_status = "approved"
+    attach_required_audio(lesson, analysis, PublishableTTSProvider(), tmp_path / "media")
+    lesson.pronunciation_focus.reference_audio.review_status = "approved"
+    data = tmp_path / "data"
+    (data / "drafts").mkdir(parents=True)
+    (data / "analysis").mkdir()
+    draft = data / "drafts" / "2026-07-12.json"
+    analysis_path = data / "analysis" / draft.name
+    draft.write_text(lesson.model_dump_json())
+    analysis_path.write_text(analysis.model_dump_json())
+    monkeypatch.setattr(pipeline, "DATA_DIR", data)
+    monkeypatch.setattr(pipeline, "MEDIA_DIR", tmp_path / "media")
+    original_replace = os.replace
+    calls = {"count": 0}
+
+    def fail_once(source, destination):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("injected analysis failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(pipeline.os, "replace", fail_once)
+    with pytest.raises(OSError, match="analysis failure"):
+        pipeline.publish(__import__("datetime").date(2026, 7, 12))
+
+    monkeypatch.setattr(pipeline.os, "replace", original_replace)
+    pipeline.publish(__import__("datetime").date(2026, 7, 12))
+    assert json.loads((tmp_path / "media" / "lessons" / lesson.id / "manifest.json").read_text())["status"] == "published"

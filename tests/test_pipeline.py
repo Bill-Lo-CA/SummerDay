@@ -302,6 +302,24 @@ def test_find_suitable_article_retries_until_a1_match() -> None:
     assert batches == []
 
 
+@pytest.mark.parametrize("value", [0, -1])
+def test_find_suitable_article_rejects_nonpositive_explicit_batch_limit(value: int) -> None:
+    with pytest.raises(ValueError, match="greater than zero"):
+        pipeline.find_suitable_article(lambda: [], analysis_for, max_batches=value)
+
+
+def test_find_suitable_article_preserves_explicit_batch_limit(monkeypatch) -> None:
+    monkeypatch.setenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "1")
+    with pytest.raises(RuntimeError, match="after 2 batch"):
+        pipeline.find_suitable_article(lambda: [], analysis_for, max_batches=2)
+
+
+def test_find_suitable_article_uses_environment_only_for_none(monkeypatch) -> None:
+    monkeypatch.setenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "2")
+    with pytest.raises(RuntimeError, match="after 2 batch"):
+        pipeline.find_suitable_article(lambda: [], analysis_for)
+
+
 def test_find_suitable_article_reports_exhausted_batches() -> None:
     article = SourceArticle(1, 1, "Dur", "https://example.test/dur", "now", "Texte difficile.")
 
@@ -322,3 +340,33 @@ def test_ollama_timeout_error_identifies_provider(monkeypatch) -> None:
 
     with pytest.raises(TimeoutError, match="Ollama timed out after 1s"):
         OllamaContentProvider(model="tiny", base_url="http://ollama.test").generate("prompt")
+
+
+def test_ollama_sends_dynamic_schema_and_options(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"message": {"content": "{}"}}).encode()
+
+    schema = {"type": "object", "properties": {"candidate_id": {"enum": ["v7"]}}}
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data)
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("services.providers.ollama.urlopen", fake_urlopen)
+    OllamaContentProvider(model="tiny", base_url="http://ollama.test", schema=schema).generate("prompt")
+
+    assert captured["body"]["format"] == schema
+    assert captured["body"]["format"]["properties"]["candidate_id"]["enum"] == ["v7"]
+    assert captured["body"]["stream"] is False
+    assert captured["body"]["think"] is False
+    assert captured["body"]["model"] == "tiny"

@@ -121,7 +121,7 @@ def find_suitable_article(
     fetcher = fetcher or fetch_vikidia_articles
     default_analyzer = analyzer is None
     analyzer = analyzer or analyze_text
-    batches = max_batches or int(os.getenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "5"))
+    batches = max_batches if max_batches is not None else int(os.getenv("SUMMERDAY_VIKIDIA_MAX_BATCHES", "5"))
     if batches <= 0:
         raise ValueError("SUMMERDAY_VIKIDIA_MAX_BATCHES must be greater than zero")
 
@@ -381,6 +381,15 @@ def error_details(exc: Exception) -> list[dict[str, str]]:
     return [{"path": "$", "message": str(exc)}]
 
 
+def sanitized_error_message(exc: Exception) -> str:
+    message = re.sub(r"https?://\S+", "<url>", str(exc))
+    return re.sub(
+        r"(?i)(authorization|token|password|secret|api[_-]?key)\s*[:=]\s*\S+",
+        r"\1=<redacted>",
+        message,
+    )
+
+
 def write_generation_record(lesson_date: date, record: dict) -> Path:
     path = DATA_DIR / "generation" / f"{lesson_date.isoformat()}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -462,7 +471,13 @@ def generate_content(lesson_date: date) -> Path:
     record = {"source_article": asdict(source), "attempts": diagnostics}
     try:
         lesson = generate_lesson(source, lesson_date, analysis, diagnostics=diagnostics)
-    except RuntimeError:
+    except Exception as exc:
+        record["terminal_failure"] = {
+            "exception_type": type(exc).__name__,
+            "message": sanitized_error_message(exc),
+            "stage": "content_generation",
+            "provider": "ollama",
+        }
         write_generation_record(lesson_date, record)
         raise
     write_generation_record(lesson_date, record)
@@ -518,14 +533,40 @@ def generate(lesson_date: date) -> Path:
 def publish(lesson_date: date) -> Path:
     draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
     target = DATA_DIR / "lessons" / draft.name
-    if target.exists():
-        raise FileExistsError(f"Published lesson is immutable: {target}")
     lesson = validate_evidence(DailyLesson.model_validate_json(draft.read_text()))
     lesson = validate_publishable_lesson(lesson, MEDIA_DIR)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(draft, target)
     analysis = DATA_DIR / "analysis" / draft.name
-    shutil.copyfile(analysis, target.with_suffix(".analysis.json"))
+    if not analysis.exists():
+        raise FileNotFoundError(f"analysis is missing: {analysis}")
+    published_analysis = target.with_suffix(".analysis.json")
+    manifest_path = MEDIA_DIR / "lessons" / lesson.id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get("status") == "published":
+        if target.read_bytes() != draft.read_bytes() or published_analysis.read_bytes() != analysis.read_bytes():
+            raise ValueError("published package conflicts with the current validated package")
+        return target
+    if manifest.get("status") not in {"complete", "partially_published"}:
+        raise ValueError(f"audio manifest is not publishable: {manifest.get('status')}")
+    for source, destination in ((draft, target), (analysis, published_analysis)):
+        if destination.exists() and destination.read_bytes() != source.read_bytes():
+            raise ValueError(f"published package conflicts with immutable target: {destination}")
+    manifest["status"] = "partially_published"
+    temporary_manifest = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    temporary_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+    os.replace(temporary_manifest, manifest_path)
+
+    def atomic_copy(source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            if destination.read_bytes() != source.read_bytes():
+                raise ValueError(f"published package conflicts with immutable target: {destination}")
+            return
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, destination)
+
+    atomic_copy(draft, target)
+    atomic_copy(analysis, published_analysis)
     mark_audio_published(lesson, MEDIA_DIR)
     return target
 

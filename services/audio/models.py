@@ -20,6 +20,7 @@ class AudioAssetRef(BaseModel):
     measured_wpm: float | None = Field(default=None, gt=0)
     length_scale: float | None = Field(default=None, gt=0)
     sample_rate: int | None = Field(default=None, gt=0)
+    synthesis_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     review_status: ReviewStatus = "pending"
 
 
