@@ -4,16 +4,18 @@ from pathlib import Path
 
 import pytest
 
+import services.pipeline as pipeline
 from services.api.schemas import DailyLesson
-from services.nlp import NLPAnalysis, TokenAnalysis
+from services.nlp import NLPAnalysis
 from services.pipeline import (
     SourceArticle,
     clean_segment,
-    deduplicate_vocabulary,
     generate_lesson,
+    materialize_vocabulary,
     normalize_focus_evidence,
-    normalize_vocabulary,
     validate_evidence,
+    vocabulary_candidates,
+    write_generation_record,
 )
 
 
@@ -49,104 +51,159 @@ def analysis_for(text: str) -> NLPAnalysis:
     )
 
 
-def reflexive_analysis() -> NLPAnalysis:
-    analysis = analysis_for("Ils se réveillent.")
-    analysis.sentences[0].tokens = [
-        TokenAnalysis.model_validate(
-            {
-            "text": "se",
-            "lemma": "soi",
-            "upos": "PRON",
-            "feats": "Person=3|PronType=Prs",
-            "head": 2,
-            "deprel": "expl:pv",
-            }
-        ),
-        TokenAnalysis.model_validate(
-            {
-            "text": "réveillent",
-            "lemma": "réveiller",
-            "upos": "VERB",
-            "feats": "Mood=Ind|VerbForm=Fin",
-            "head": 0,
-            "deprel": "root",
-            }
-        ),
+def candidate_analysis() -> NLPAnalysis:
+    text = "Elle circule dans la ville avec son petit vélo rouge chaque matin."
+    words = [
+        ("Elle", "elle", "PRON"),
+        ("circule", "circuler", "VERB"),
+        ("dans", "dans", "ADP"),
+        ("la", "le", "DET"),
+        ("ville", "ville", "NOUN"),
+        ("avec", "avec", "ADP"),
+        ("son", "son", "DET"),
+        ("petit", "petit", "ADJ"),
+        ("vélo", "vélo", "NOUN"),
     ]
-    return analysis
+    return NLPAnalysis.model_validate(
+        {
+            "sentences": [
+                {
+                    "text": text,
+                    "tokens": [
+                        {
+                            "text": surface,
+                            "lemma": lemma,
+                            "upos": upos,
+                            "feats": None,
+                            "head": 0,
+                            "deprel": "dep",
+                        }
+                        for surface, lemma, upos in words
+                    ],
+                }
+            ],
+            "suitability": analysis_for(text).suitability.model_dump(),
+        }
+    )
+
+
+def generation_payload(candidate_ids: list[str]) -> dict:
+    return {
+        "title": "La ville",
+        "core_vocabulary": [
+            {
+                "candidate_id": candidate_id,
+                "french_definition": "mot utile",
+                "english_hint": "useful word",
+            }
+            for candidate_id in candidate_ids
+        ],
+        "morphology_focus": {"title": "verbe", "explanation": "forme", "evidence": "Elle circule dans la ville avec son petit vélo rouge chaque matin."},
+        "pronunciation_focus": {"title": "ville", "explanation": "son", "evidence": "Elle circule dans la ville avec son petit vélo rouge chaque matin."},
+    }
+
+
+def multiword_analysis() -> NLPAnalysis:
+    text = "Les enfants se réveillent et jouent un rôle."
+    words = [
+        ("Les", "le", "DET"),
+        ("enfants", "enfant", "NOUN"),
+        ("se", "soi", "PRON"),
+        ("réveillent", "réveiller", "VERB"),
+        ("et", "et", "CCONJ"),
+        ("jouent", "jouer", "VERB"),
+        ("un", "un", "DET"),
+        ("rôle", "rôle", "NOUN"),
+    ]
+    return NLPAnalysis.model_validate(
+        {
+            "sentences": [
+                {
+                    "text": text,
+                    "tokens": [
+                        {
+                            "text": surface,
+                            "lemma": lemma,
+                            "upos": upos,
+                            "feats": "Mood=Ind|VerbForm=Fin" if upos == "VERB" else None,
+                            "head": 0,
+                            "deprel": "dep",
+                        }
+                        for surface, lemma, upos in words
+                    ],
+                }
+            ],
+            "suitability": analysis_for(text).suitability.model_dump(),
+        }
+    )
 
 
 def test_pipeline_validates_generated_lesson() -> None:
-    payload = json.loads(Path("content/fixtures/daily-lesson.json").read_text())
-    source = SourceArticle(1, 2, "Abeille", payload["source_url"], "now", payload["article_text"])
+    analysis = candidate_analysis()
+    source = SourceArticle(1, 2, "Ville", "https://example.test/ville", "now", analysis.sentences[0].text)
 
-    lesson = generate_lesson(source, date(2026, 7, 12), analysis_for(source.text), lambda _: payload)
+    lesson = generate_lesson(source, date(2026, 7, 12), analysis, lambda _: generation_payload([f"v{index}" for index in range(1, 9)]))
 
     assert len(lesson.core_vocabulary) == 8
     assert lesson.id == "vikidia-1-2-2026-07-12"
     assert lesson.source_revision == "2"
+    assert lesson.core_vocabulary[1].surface_form == "circule"
+    assert lesson.core_vocabulary[1].lexical_item == "circuler"
 
 
 def test_pipeline_rejects_evidence_not_in_article() -> None:
     payload = json.loads(Path("content/fixtures/daily-lesson.json").read_text())
     payload["core_vocabulary"][0]["surface_form"] = "absent"
 
-    with pytest.raises(ValueError, match="surface form"):
+    with pytest.raises(ValueError, match="surface_form"):
         validate_evidence(DailyLesson.model_validate(payload))
 
 
-def test_model_output_deduplicates_lexical_items() -> None:
-    payload = json.loads(Path("content/fixtures/daily-lesson.json").read_text())
-    payload["core_vocabulary"].append(payload["core_vocabulary"][0])
+def test_pipeline_repairs_with_raw_payload_and_field_paths() -> None:
+    analysis = candidate_analysis()
+    source = SourceArticle(1, 2, "Ville", "https://example.test/ville", "now", analysis.sentences[0].text)
+    responses = [generation_payload(["missing", *[f"v{index}" for index in range(2, 9)]]), generation_payload([f"v{index}" for index in range(1, 9)])]
+    prompts = []
+    diagnostics = []
 
-    assert len(deduplicate_vocabulary(payload)["core_vocabulary"]) == 8
+    lesson = generate_lesson(
+        source,
+        date(2026, 7, 12),
+        analysis,
+        lambda prompt: (prompts.append(prompt), responses.pop(0))[1],
+        diagnostics,
+    )
+
+    assert lesson.core_vocabulary[0].surface_form == "Elle"
+    assert diagnostics[0]["validation_errors"][0]["path"] == "core_vocabulary.0.candidate_id"
+    assert '"candidate_id": "missing"' in prompts[1]
 
 
-def test_single_word_verb_uses_nlp_lemma() -> None:
+def test_multi_token_candidates_preserve_infinitives_and_surfaces() -> None:
+    candidates = vocabulary_candidates(multiword_analysis())
+    by_lexical_item = {candidate.lexical_item: candidate for candidate in candidates}
     payload = {
         "core_vocabulary": [
-            {"surface_form": "meurt", "lexical_item": "meurt", "source_sentence": "Il ... meurt."}
+            {"candidate_id": by_lexical_item["se réveiller"].id},
+            {"candidate_id": by_lexical_item["jouer un rôle"].id},
         ]
     }
 
-    normalized = normalize_vocabulary(payload, analysis_for("Il meurt."))
+    materialized = materialize_vocabulary(payload, candidates)["core_vocabulary"]
 
-    assert normalized["core_vocabulary"][0]["lexical_item"] == "mourir"
-    assert normalized["core_vocabulary"][0]["source_sentence"] == "Il meurt."
-
-
-def test_reflexive_verb_keeps_reflexive_marker() -> None:
-    payload = {"core_vocabulary": [{"surface_form": "se réveillent", "lexical_item": "réveillent"}]}
-
-    normalized = normalize_vocabulary(payload, reflexive_analysis())
-
-    assert normalized["core_vocabulary"][0]["lexical_item"] == "se réveiller"
+    assert materialized[0]["surface_form"] == "se réveillent"
+    assert materialized[0]["lexical_item"] == "se réveiller"
+    assert materialized[1]["surface_form"] == "jouent un rôle"
+    assert materialized[1]["lexical_item"] == "jouer un rôle"
 
 
-def test_proper_nouns_are_removed_from_vocabulary() -> None:
-    analysis = analysis_for("Paris")
-    analysis.sentences[0].tokens[0].text = "Paris"
-    analysis.sentences[0].tokens[0].lemma = "Paris"
-    analysis.sentences[0].tokens[0].upos = "PROPN"
-    payload = {"core_vocabulary": [{"surface_form": "Paris", "lexical_item": "Paris"}]}
+def test_generation_record_preserves_attempt_details(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
+    record = {"source_article": {"title": "Ville"}, "attempts": [{"raw_response": {"title": "x"}, "normalized_payload": None, "validation_errors": [{"path": "title", "message": "missing"}]}]}
 
-    assert normalize_vocabulary(payload, analysis)["core_vocabulary"] == []
+    path = write_generation_record(date(2026, 7, 12), record)
 
-
-def test_non_reflexive_multiword_item_is_not_reduced_to_one_lemma() -> None:
-    analysis = reflexive_analysis()
-    analysis.sentences[0].tokens[0].text = "faire"
-    analysis.sentences[0].tokens[0].lemma = "faire"
-    analysis.sentences[0].tokens[0].upos = "VERB"
-    analysis.sentences[0].tokens[1].text = "attention"
-    analysis.sentences[0].tokens[1].lemma = "attention"
-    analysis.sentences[0].tokens[1].upos = "NOUN"
-    payload = {"core_vocabulary": [{"surface_form": "faire attention", "lexical_item": "faire attention"}]}
-
-    item = normalize_vocabulary(payload, analysis)["core_vocabulary"][0]
-
-    assert item["lexical_item"] == "faire attention"
-    assert "lemma" not in item
+    assert json.loads(path.read_text()) == record
 
 
 def test_focus_evidence_uses_matching_nlp_sentence() -> None:

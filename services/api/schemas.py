@@ -16,6 +16,13 @@ class VocabularyItem(BaseModel):
     audio: AudioAssetRef | None = None
 
 
+class VocabularySelection(BaseModel):
+    candidate_id: str
+    french_definition: str
+    english_hint: str
+    spoken_text: str | None = None
+
+
 class LessonFocus(BaseModel):
     title: str
     explanation: str
@@ -25,6 +32,13 @@ class LessonFocus(BaseModel):
     requirement: str = "required"
     review_status: str = "pending"
     reference_audio: AudioAssetRef | None = None
+
+
+class LessonGeneration(BaseModel):
+    title: str
+    core_vocabulary: list[VocabularySelection] = Field(min_length=8, max_length=12)
+    morphology_focus: LessonFocus
+    pronunciation_focus: LessonFocus
 
 
 class DailyLesson(BaseModel):
