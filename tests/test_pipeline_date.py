@@ -47,3 +47,31 @@ def test_generate_content_persists_draft_and_analysis_before_audio(tmp_path: Pat
 
     assert DailyLesson.model_validate_json(draft.read_text()).id == lesson.id
     assert (tmp_path / "analysis" / "2026-07-12.json").exists()
+
+
+def test_generate_audio_uses_existing_draft_without_fetching_content(tmp_path: Path, monkeypatch) -> None:
+    lesson_date = date(2026, 7, 12)
+    lesson = DailyLesson.model_validate_json(Path("content/fixtures/daily-lesson.json").read_text())
+    analysis = NLPAnalysis.model_validate(
+        {
+            "sentences": [],
+            "suitability": {
+                "classification": "suitable", "word_count": 1, "sentence_count": 1,
+                "average_sentence_length": 1, "longest_sentence_length": 1,
+                "proper_noun_density": 0, "number_density": 0, "morphology_opportunities": 0,
+            },
+        }
+    )
+    monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "MEDIA_DIR", tmp_path / "media")
+    draft = pipeline.draft_path(lesson_date)
+    draft.parent.mkdir(parents=True)
+    draft.write_text(lesson.model_dump_json())
+    analysis_file = pipeline.analysis_path(lesson_date)
+    analysis_file.parent.mkdir(parents=True)
+    analysis_file.write_text(analysis.model_dump_json())
+    monkeypatch.setattr(pipeline, "fetch_vikidia_articles", lambda: (_ for _ in ()).throw(AssertionError("must not fetch")))
+    monkeypatch.setattr(pipeline, "tts_provider", lambda: pipeline.FakeTTSProvider())
+
+    assert pipeline.generate_audio(lesson_date) == draft
+    assert DailyLesson.model_validate_json(draft.read_text()).learning_audio is not None
