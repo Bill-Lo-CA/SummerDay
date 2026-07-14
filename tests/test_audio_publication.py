@@ -35,6 +35,21 @@ class FailFirstVocabularyProvider(FakeTTSProvider):
         return super().synthesize(text, output_path, profile)
 
 
+class ReplacementTTSProvider:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def synthesize(self, text, output_path, profile):
+        self.calls.append(output_path)
+        FakeTTSProvider().synthesize(text, output_path, profile)
+        return AudioGenerationResult(
+            provider="piper",
+            model="replacement",
+            mime_type="audio/wav",
+            target_wpm=float(profile.learning_target_wpm),
+        )
+
+
 def lesson_and_analysis() -> tuple[DailyLesson, NLPAnalysis]:
     lesson = DailyLesson.model_validate_json(Path("content/fixtures/daily-lesson.json").read_text())
     analysis = NLPAnalysis.model_validate({
@@ -74,6 +89,18 @@ def test_fake_audio_blocks_publication(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="fake audio"):
         validate_publishable_lesson(lesson, tmp_path)
+
+
+def test_generate_audio_replaces_fake_assets_with_real_provider(tmp_path: Path) -> None:
+    lesson, analysis = lesson_and_analysis()
+    attach_required_audio(lesson, analysis, FakeTTSProvider(), tmp_path)
+    replacement = ReplacementTTSProvider()
+
+    attach_required_audio(lesson, analysis, replacement, tmp_path)
+
+    assert len(replacement.calls) == 2 + len(analysis.sentences) + len(lesson.core_vocabulary)
+    assert lesson.learning_audio.provider == "piper"
+    assert all(item.audio.provider == "piper" for item in lesson.core_vocabulary)
 
 
 def test_published_audio_package_cannot_resume(tmp_path: Path) -> None:

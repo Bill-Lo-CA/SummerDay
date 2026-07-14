@@ -9,6 +9,7 @@ from services.audio.models import AudioAssetRef, LessonSentence, SpeechProfile
 from services.audio.hashing import sha256_file
 from services.nlp import NLPAnalysis
 from services.providers.tts import AudioGenerationResult
+from services.providers.fake_tts import FakeTTSProvider
 from services.audio.validation import validate_audio_asset, wav_metadata
 
 
@@ -116,7 +117,7 @@ def attach_required_audio(
 
     def run(task: AudioTask, existing, assign: Callable[[AudioAssetRef], None]) -> None:
         try:
-            if existing is not None:
+            if existing is not None and not (existing.provider == "fake" and not isinstance(provider, FakeTTSProvider)):
                 try:
                     validate_audio_asset(existing, media_root)
                     asset = existing
