@@ -384,8 +384,8 @@ def error_details(exc: Exception) -> list[dict[str, str]]:
 def sanitized_error_message(exc: Exception) -> str:
     message = re.sub(r"https?://\S+", "<url>", str(exc))
     return re.sub(
-        r"(?i)(authorization|token|password|secret|api[_-]?key)\s*[:=]\s*\S+",
-        r"\1=<redacted>",
+        r"(?i)((?:authorization\s*[:=]\s*(?:bearer\s+)?|token|password|secret|api[_-]?key)\s*[:=]?\s*)\S+",
+        r"\1<redacted>",
         message,
     )
 

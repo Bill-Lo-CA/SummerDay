@@ -15,6 +15,7 @@ from services.pipeline import (
     lesson_generation_schema,
     materialize_vocabulary,
     normalize_focus_evidence,
+    sanitized_error_message,
     validate_evidence,
     vocabulary_candidates,
     write_generation_record,
@@ -260,6 +261,13 @@ def test_generation_record_preserves_attempt_details(monkeypatch, tmp_path: Path
     path = write_generation_record(date(2026, 7, 12), record)
 
     assert json.loads(path.read_text()) == record
+
+
+def test_sanitized_error_message_redacts_full_bearer_credential() -> None:
+    message = sanitized_error_message(RuntimeError("Authorization: Bearer sk-test-secret"))
+
+    assert "sk-test-secret" not in message
+    assert message == "Authorization: Bearer <redacted>"
 
 
 def test_focus_evidence_uses_matching_nlp_sentence() -> None:
