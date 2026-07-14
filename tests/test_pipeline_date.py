@@ -75,3 +75,13 @@ def test_generate_audio_uses_existing_draft_without_fetching_content(tmp_path: P
 
     assert pipeline.generate_audio(lesson_date) == draft
     assert DailyLesson.model_validate_json(draft.read_text()).learning_audio is not None
+
+
+def test_tts_provider_selects_piper(monkeypatch) -> None:
+    monkeypatch.setenv("SUMMERDAY_TTS_PROVIDER", "piper")
+    monkeypatch.setenv("SUMMERDAY_PIPER_MODEL", "data/piper/fr_FR-tom-medium.onnx")
+
+    provider = pipeline.tts_provider()
+
+    assert isinstance(provider, pipeline.PiperTTSProvider)
+    assert provider.model_path == Path("data/piper/fr_FR-tom-medium.onnx")
