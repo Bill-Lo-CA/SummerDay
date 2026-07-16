@@ -98,7 +98,7 @@ pnpm --dir apps/web dev
 Open <http://localhost:5173>. The API documentation is available at
 <http://localhost:8000/docs>.
 
-The page shows a lesson only after a lesson for the current date has been
+The `/today` page shows a lesson only after a lesson for the current date has been
 published. Before that, the API returns `404`.
 
 ## Generate and publish a lesson
