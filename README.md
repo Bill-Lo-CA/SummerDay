@@ -77,6 +77,10 @@ Use `fr_FR-tom-medium` as the alternative male voice. Piper converts the
 lesson target WPM to its `length_scale`; adjust `SUMMERDAY_PIPER_BASELINE_WPM`
 and `SUMMERDAY_PIPER_LENGTH_SCALE` after listening to generated audio.
 
+Generate alphabet pronunciation files locally with
+`scripts/split_french_alphabet.py`. The source recording and generated files
+live in the ignored `data/` storage.
+
 ## Run the application
 
 Start the API in one terminal:

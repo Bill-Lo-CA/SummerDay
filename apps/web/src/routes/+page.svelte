@@ -58,6 +58,7 @@
       <p class="eyebrow">Today’s French · {lesson.level}</p>
       <h1>{lesson.title}</h1>
       <a href={lesson.source_url}>Source: {lesson.source_title} on Vikidia</a>
+      <p><a href="/alphabet">French alphabet pronunciation</a></p>
       <div class="segment-audio">
         <AudioControl src={audioUrl(lesson.learning_audio)} label="Play learning-speed lesson" />
         {#if lesson.natural_audio}
