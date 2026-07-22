@@ -1,0 +1,10 @@
+[Unit]
+Description=SummerDay daily lesson release
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/summerday
+EnvironmentFile=/etc/summerday/summerday.env
+ExecStart=/srv/summerday/.venv/bin/python -m services.pipeline release
+TimeoutStartSec=30min

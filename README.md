@@ -187,6 +187,25 @@ systemd templates are under `deploy/`. Check `/api/health` after deployment.
 Do not expose the media directory directly as a filesystem alias: the API
 validates the path and serves versioned files with immutable cache headers.
 
+### Automatic midnight publishing
+
+The systemd timer follows the server's local timezone, which must match
+`SUMMERDAY_TIMEZONE`. Install the API service and publishing templates, then
+enable the API, nginx, and timer so the site remains available after reboot:
+
+```bash
+sudo install -m 0644 deploy/summerday-api.service.example /etc/systemd/system/summerday-api.service
+sudo install -m 0644 deploy/summerday-publish.service.example /etc/systemd/system/summerday-publish.service
+sudo install -m 0644 deploy/summerday-publish.timer.example /etc/systemd/system/summerday-publish.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now nginx summerday-api.service summerday-publish.timer
+```
+
+At 00:00, the timer resumes or runs content generation, audio generation,
+approval, and publication for the local date. If any step fails, it stops
+without publishing and records the sanitized error in
+`data/release-failures/YYYY-MM-DD.json`.
+
 ## Repository boundaries
 
 - Implementation code lives in this repository.

@@ -1,3 +1,4 @@
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,63 @@ def test_cli_defaults_to_application_date(monkeypatch, capsys) -> None:
 
     assert captured["date"] == expected
     assert capsys.readouterr().out == "draft.json\n"
+
+
+def test_release_runs_once_then_only_confirms_published_lesson(tmp_path: Path, monkeypatch) -> None:
+    lesson_date = date(2026, 7, 12)
+    calls: list[str] = []
+    monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
+
+    def fake_content(value: date) -> Path:
+        calls.append("content")
+        draft = pipeline.draft_path(value)
+        draft.parent.mkdir(parents=True)
+        draft.write_text("{}")
+        return draft
+
+    def fake_stage(name: str):
+        def run(value: date) -> Path:
+            calls.append(name)
+            return pipeline.draft_path(value)
+
+        return run
+
+    def fake_publish(value: date) -> Path:
+        calls.append("publish")
+        target = pipeline.DATA_DIR / "lessons" / f"{value.isoformat()}.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
+        return target
+
+    monkeypatch.setattr(pipeline, "generate_content", fake_content)
+    monkeypatch.setattr(pipeline, "generate_audio", fake_stage("audio"))
+    monkeypatch.setattr(pipeline, "review", fake_stage("review"))
+    monkeypatch.setattr(pipeline, "publish", fake_publish)
+
+    assert pipeline.release(lesson_date) == tmp_path / "lessons" / "2026-07-12.json"
+    assert pipeline.release(lesson_date) == tmp_path / "lessons" / "2026-07-12.json"
+    assert calls == ["content", "audio", "review", "publish", "publish"]
+
+
+def test_release_logs_failure_without_publishing(tmp_path: Path, monkeypatch) -> None:
+    lesson_date = date(2026, 7, 12)
+    calls: list[str] = []
+    monkeypatch.setattr(pipeline, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "generate_content",
+        lambda _: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr(pipeline, "generate_audio", lambda _: calls.append("audio"))
+    monkeypatch.setattr(pipeline, "review", lambda _: calls.append("review"))
+    monkeypatch.setattr(pipeline, "publish", lambda _: calls.append("publish"))
+
+    failure = pipeline.release(lesson_date)
+
+    assert failure == tmp_path / "release-failures" / "2026-07-12.json"
+    assert json.loads(failure.read_text())["stage"] == "content_generation"
+    assert calls == []
+    assert not (tmp_path / "lessons" / "2026-07-12.json").exists()
 
 
 def test_generate_content_persists_draft_and_analysis_before_audio(tmp_path: Path, monkeypatch) -> None:

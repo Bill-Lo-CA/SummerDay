@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SummerDay daily lesson release at local midnight
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+Unit=summerday-publish.service
+
+[Install]
+WantedBy=timers.target

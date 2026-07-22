@@ -530,6 +530,50 @@ def generate(lesson_date: date) -> Path:
     return generate_audio(lesson_date)
 
 
+def release_failure_path(lesson_date: date) -> Path:
+    return DATA_DIR / "release-failures" / f"{lesson_date.isoformat()}.json"
+
+
+def write_release_failure(lesson_date: date, stage: str, exc: Exception) -> Path:
+    path = release_failure_path(lesson_date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "date": lesson_date.isoformat(),
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+                "stage": stage,
+                "exception_type": type(exc).__name__,
+                "message": sanitized_error_message(exc),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
+    return path
+
+
+def release(lesson_date: date) -> Path:
+    draft = draft_path(lesson_date)
+    published = DATA_DIR / "lessons" / f"{lesson_date.isoformat()}.json"
+    stage = "content_generation"
+    try:
+        if published.exists():
+            stage = "publish"
+            return publish(lesson_date)
+        if not draft.exists():
+            generate_content(lesson_date)
+        stage = "audio_generation"
+        generate_audio(lesson_date)
+        stage = "review"
+        review(lesson_date)
+        stage = "publish"
+        return publish(lesson_date)
+    except Exception as exc:
+        return write_release_failure(lesson_date, stage, exc)
+
+
 def publish(lesson_date: date) -> Path:
     draft = DATA_DIR / "drafts" / f"{lesson_date.isoformat()}.json"
     target = DATA_DIR / "lessons" / draft.name
@@ -590,7 +634,7 @@ def review(lesson_date: date) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or publish a daily lesson.")
-    parser.add_argument("command", choices=("generate", "generate-content", "generate-audio", "review", "publish"))
+    parser.add_argument("command", choices=("generate", "generate-content", "generate-audio", "review", "release", "publish"))
     parser.add_argument("--date", type=date.fromisoformat, default=application_date())
     args = parser.parse_args()
     path = {
@@ -598,6 +642,7 @@ def main() -> None:
         "generate-content": generate_content,
         "generate-audio": generate_audio,
         "review": review,
+        "release": release,
         "publish": publish,
     }[args.command](args.date)
     print(path)
